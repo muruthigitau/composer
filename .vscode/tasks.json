@@ -1,0 +1,20 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "build",
+      "label": "npm: build",
+      "detail": "Build webview and extension",
+      "problemMatcher": []
+    },
+    {
+      "type": "npm",
+      "script": "watch",
+      "label": "npm: watch",
+      "detail": "Watch for changes",
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}

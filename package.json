@@ -1,0 +1,136 @@
+{
+  "name": "commit-composer",
+  "displayName": "Commit Composer",
+  "description": "AI-powered Git commit composer for VS Code. Splits staged changes into logical, reviewable commits.",
+  "version": "0.0.1",
+  "publisher": "your-publisher-name",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/commit-composer"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Source Control",
+    "AI"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "commitComposer.open",
+        "title": "Commit Composer: Open",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "commitComposer.focus",
+        "title": "Commit Composer: Focus View"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "commitComposer.focus",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "commitComposerContainer",
+          "title": "Commit Composer",
+          "icon": "$(git-commit)"
+        }
+      ]
+    },
+    "views": {
+      "commitComposerContainer": [
+        {
+          "type": "webview",
+          "id": "commitComposerView",
+          "name": "Commit Composer",
+          "contextualTitle": "Commit Composer"
+        }
+      ]
+    },
+    "menus": {
+      "scm/title": [
+        {
+          "command": "commitComposer.open",
+          "group": "navigation@100",
+          "when": "scmProvider == git"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "commitComposer.open"
+        },
+        {
+          "command": "commitComposer.focus"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "commitComposer.generate",
+          "when": "view == commitComposerView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Commit Composer",
+      "properties": {
+        "commitComposer.provider": {
+          "type": "string",
+          "enum": [
+            "ollama",
+            "openai",
+            "custom"
+          ],
+          "default": "ollama",
+          "description": "The AI provider used to generate commit plans."
+        },
+        "commitComposer.model": {
+          "type": "string",
+          "default": "qwen2.5-coder",
+          "description": "The model name used by the AI provider."
+        },
+        "commitComposer.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional OpenAI-compatible base URL (e.g. for Ollama: http://localhost:11434/v1). Leave empty to use provider defaults."
+        },
+        "commitComposer.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for the AI provider. Overrides the OPENAI_API_KEY environment variable."
+        },
+        "commitComposer.maxCommits": {
+          "type": "number",
+          "default": 6,
+          "description": "Maximum number of commits the AI should produce for a single generation."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "npm run build-webview && npm run build-extension",
+    "build-webview": "cd webview && npm run build",
+    "build-extension": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18",
+    "watch": "npm run watch-webview & npm run watch-extension",
+    "watch-webview": "cd webview && npm run watch",
+    "watch-extension": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --watch",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "esbuild": "^0.20.2",
+    "typescript": "^5.4.0"
+  }
+}
