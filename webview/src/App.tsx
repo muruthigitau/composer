@@ -1,435 +1,605 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  CommitGroup,
-  CommitPlan,
+  ActivityItem,
+  DraftCommit,
+  DraftCommitPlan,
   ExtensionToWebviewMessage,
-  StagedChangeSummary
+  FileDiff,
+  PROVIDER_DEFAULTS,
+  ProviderConfig,
+  ProviderType,
 } from "./types";
-
-const vscode = window.acquireVsCodeApi();
-
-interface CommitCardProps {
-  commit: CommitGroup;
-  index: number;
-  selected: boolean;
-  onToggle: (id: string) => void;
-  onViewDiff: (commit: CommitGroup) => void;
-}
-
-function CommitCard({ commit, index, selected, onToggle, onViewDiff }: CommitCardProps) {
-  const [expanded, setExpanded] = useState(false);
-
-  const typeColor = useMemo(() => {
-    const colors: Record<string, string> = {
-      feat: "#4CAF50",
-      fix: "#F44336",
-      refactor: "#2196F3",
-      docs: "#9C27B0",
-      style: "#FF9800",
-      test: "#00BCD4",
-      chore: "#795548",
-      perf: "#3F51B5",
-      ci: "#607D8B",
-      build: "#8D6E63",
-      revert: "#D32F2F"
-    };
-    return colors[commit.type] || "#757575";
-  }, [commit.type]);
-
-  const fileCount = commit.changes?.length || 0;
-  const hunksCount = commit.changes?.reduce((sum, c) => sum + (c.hunks?.length || 0), 0) || 0;
-
-  return (
-    <div className={`commit-card ${selected ? "selected" : ""}`}>
-      <div className="commit-card-header" onClick={() => setExpanded(!expanded)}>
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={() => onToggle(commit.id)}
-          className="commit-toggle"
-          onClick={(e) => e.stopPropagation()}
-          aria-label={`Select commit ${index + 1}`}
-        />
-        <div className="commit-type" style={{ backgroundColor: typeColor }}>
-          {commit.type}
-        </div>
-        <div className="commit-subject-container">
-          <span className="commit-number">#{index + 1}</span>
-          <span className="commit-subject">{commit.subject}</span>
-        </div>
-        <span className="commit-counts">
-          {fileCount} file{fileCount !== 1 ? "s" : ""}
-          {hunksCount > 0 && ` · ${hunksCount} hunk${hunksCount !== 1 ? "s" : ""}`}
-        </span>
-        <span className={`chevron ${expanded ? "expanded" : ""}`}>▼</span>
-      </div>
-
-      {expanded && (
-        <div className="commit-card-details">
-          {commit.body && commit.body.length > 0 && (
-            <ul className="commit-body">
-              {commit.body.map((line, i) => (
-                <li key={i}>{line}</li>
-              ))}
-            </ul>
-          )}
-
-          <div className="commit-files">
-            {commit.changes?.map((change, ci) => (
-              <div key={`${change.file}-${ci}`} className="commit-file-row">
-                <span className="file-icon">📄</span>
-                <span className="file-path">{change.file}</span>
-                {change.hunks && change.hunks.length > 0 && (
-                  <span className="hunk-indicator">
-                    {change.hunks.map((h) => `H${h + 1}`).join(", ")}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {commit.reasoning && (
-            <div className="commit-reasoning">
-              <strong>Reasoning:</strong> {commit.reasoning}
-            </div>
-          )}
-
-          <div className="commit-actions">
-            <button
-              className="vscode-button secondary"
-              onClick={() => onViewDiff(commit)}
-            >
-              View Diff
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-interface StagedInfoProps {
-  summary: StagedChangeSummary;
-}
-
-function StagedInfo({ summary }: StagedInfoProps) {
-  return (
-    <div className="staged-info">
-      <div className="staged-summary">
-        <span className="staged-file-count">{summary.fileCount} files</span>
-        <span className="staged-add">+{summary.additions}</span>
-        <span className="staged-del">-{summary.deletions}</span>
-      </div>
-      <div className="staged-files-preview">
-        {summary.files?.slice(0, 8).map((file, i) => (
-          <span key={i} className="staged-file" title={file}>
-            {file.split("/").pop()}
-          </span>
-        ))}
-        {(summary.files?.length || 0) > 8 && (
-          <span className="staged-file-more">
-            +{(summary.files?.length || 0) - 8} more
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
+import { isSidebar, sendMessage } from "./lib/vscodeApi";
+import { copyText } from "./lib/clipboard";
+import { SidebarView } from "./components/SidebarView";
+import { LeftPanel } from "./components/LeftPanel";
+import { MainStage } from "./components/MainStage";
+import { LoadingModal } from "./components/LoadingModal";
+import { QuickPickModal } from "./components/QuickPickModal";
+import { PrModal } from "./components/PrModal";
 
 export function App() {
+  const [stagedFiles, setStagedFiles] = useState<FileDiff[]>([]);
+  const [draftCommits, setDraftCommits] = useState<DraftCommit[]>([]);
+  const [selectedCommitId, setSelectedCommitId] = useState<string | null>(null);
+  const [instructions, setInstructions] = useState("");
+  const [sampleMessage, setSampleMessage] = useState("");
+  const [selectedModel, setSelectedModel] = useState("Gemini 3.1 Flash-Lite");
   const [loading, setLoading] = useState(false);
-  const [plan, setPlan] = useState<CommitPlan | null>(null);
-  const [summary, setSummary] = useState<StagedChangeSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedCommits, setSelectedCommits] = useState<Set<string>>(new Set());
-  const [commitProgress, setCommitProgress] = useState<{
-    current: number;
-    total: number;
-    subject: string;
+  const [globalMessage, setGlobalMessage] = useState("");
+
+  // Provider config state (managed only via the wizard modal).
+  const [providerConfig, setProviderConfig] = useState<ProviderConfig | null>(
+    null,
+  );
+
+  // Maps provider type -> whether an API key is already stored for it.
+  const [providerApiKeyStatus, setProviderApiKeyStatus] = useState<
+    Record<string, boolean>
+  >({});
+
+  // Provider setup wizard modal state (3 steps: provider → model → api key).
+  const [qpOpen, setQpOpen] = useState(false);
+  const [qpProvider, setQpProvider] =
+    useState<ProviderConfig["provider"]>("ollama");
+  const [setupStep, setSetupStep] = useState<1 | 2 | 3>(1);
+  const [wizardKey, setWizardKey] = useState("");
+  const [wizardChangingKey, setWizardChangingKey] = useState(false);
+
+  // Real-time activity log shown in the status panel.
+  const [activityLog, setActivityLog] = useState<ActivityItem[]>([]);
+  const [showActivity, setShowActivity] = useState(false);
+  // Copy feedback state for the activity log.
+  const [copiedAll, setCopiedAll] = useState(false);
+  const [copiedItemId, setCopiedItemId] = useState<string | null>(null);
+  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // PR creation state
+  const [prOpen, setPrOpen] = useState(false);
+  const [remotes, setRemotes] = useState<{ name: string; url: string }[]>([]);
+  const [branches, setBranches] = useState<string[]>([]);
+  const [currentBranch, setCurrentBranch] = useState("");
+  const [defaultBranch, setDefaultBranch] = useState("main");
+  const [prRemote, setPrRemote] = useState("");
+  const [prBase, setPrBase] = useState("");
+  const [prHead, setPrHead] = useState("");
+  const [prTitle, setPrTitle] = useState("");
+  const [prDescription, setPrDescription] = useState("");
+  const [prGenerating, setPrGenerating] = useState(false);
+  const [prCreatedMsg, setPrCreatedMsg] = useState<string | null>(null);
+  const [prLink, setPrLink] = useState<string | null>(null);
+
+  // AI Overview collapse state
+  const [aiOverviewCollapsed, setAiOverviewCollapsed] = useState<
+    Record<string, boolean>
+  >({});
+
+  // Loading modal activities
+  const [loadingActivities, setLoadingActivities] = useState<ActivityItem[]>([]);
+  const [showLoadingModal, setShowLoadingModal] = useState(false);
+  const [loadingVariant, setLoadingVariant] = useState<"commits" | "pr">(
+    "commits",
+  );
+  const showLoadingModalRef = useRef(false);
+  const loadingModalBodyRef = useRef<HTMLDivElement>(null);
+
+  // Change-detection state: counts from the extension + a banner flag.
+  const [changeNotice, setChangeNotice] = useState<{
+    staged: number;
+    unstaged: number;
   } | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const [dirChanged, setDirChanged] = useState<boolean>(false);
+
+  // Collapsible diff viewer state.
+  const [collapsedFiles, setCollapsedFiles] = useState<Set<number>>(new Set());
+  const [lastSnapshot, setLastSnapshot] = useState<{
+    staged: number;
+    unstaged: number;
+    filesSignature: string;
+    loadedCount: number;
+  } | null>(null);
 
   useEffect(() => {
-    // Request initial refresh on mount
-    vscode.postMessage({ command: "refresh" });
+    showLoadingModalRef.current = showLoadingModal;
+  }, [showLoadingModal]);
+
+  useEffect(() => {
+    sendMessage({ command: "loadStaged" });
+    sendMessage({ command: "getProviderConfig" });
+    sendMessage({ command: "reloadChanges" });
+
+    const pollId = window.setInterval(() => {
+      sendMessage({ command: "reloadChanges" });
+    }, 5000);
 
     const handleMessage = (event: MessageEvent) => {
-      const message = event.data as ExtensionToWebviewMessage;
-
-      switch (message.command) {
-        case "refreshDone": {
-          setSummary(message.summary);
-          setError(null);
+      const msg = event.data as ExtensionToWebviewMessage;
+      switch (msg.command) {
+        case "setStagedOverview":
+          setStagedFiles(msg.files);
           break;
-        }
-        case "setLoading": {
-          setLoading(message.value);
-          if (message.value) {
-            setError(null);
-            setSuccessMessage(null);
+        case "setLoading":
+          setLoading(msg.value);
+          showLoadingModalRef.current = msg.value;
+          if (msg.value) {
+            setShowLoadingModal(true);
+            setLoadingActivities([]);
+          } else {
+            setTimeout(() => {
+              showLoadingModalRef.current = false;
+              setShowLoadingModal(false);
+              setLoadingActivities([]);
+            }, 500);
           }
           break;
-        }
         case "planGenerated":
-        case "planRegenerated": {
-          setPlan(message.plan);
-          setSelectedCommits(new Set(message.plan.commits.map((c) => c.id)));
+          setDraftCommits(msg.plan.commits);
+          if (msg.plan.commits.length > 0) {
+            setSelectedCommitId(msg.plan.commits[0].id);
+          }
           setError(null);
-          setSuccessMessage(null);
+          setLoading(false);
+          setShowLoadingModal(false);
           break;
-        }
-        case "error": {
-          setError(message.message);
-          setSuccessMessage(null);
-          break;
-        }
-        case "commitSuccess": {
-          setSuccessMessage(
-            `Successfully created ${message.count} commit${message.count === 1 ? "" : "s"}!`
+        case "singleRegenerated":
+          setDraftCommits((prev) =>
+            prev.map((c) => (c.id === msg.commit.id ? msg.commit : c)),
           );
-          setPlan(null);
-          setCommitProgress(null);
+          setError(null);
+          break;
+        case "changesDetected":
+          setChangeNotice({ staged: msg.staged, unstaged: msg.unstaged });
+          break;
+        case "gitSnapshot": {
+          const snap = msg.snapshot;
+          if (
+            lastSnapshot &&
+            lastSnapshot.filesSignature !== snap.filesSignature
+          ) {
+            setDirChanged(true);
+          }
+          setLastSnapshot(snap);
           break;
         }
-        case "commitProgress": {
-          setCommitProgress(message);
+        case "apiKeyPrompted":
+          setError(null);
           break;
-        }
+        case "activity":
+          setActivityLog((prev) => [...prev.slice(-49), msg.activity]);
+          setShowActivity(true);
+          if (showLoadingModalRef.current) {
+            setLoadingActivities((prev) => [...prev.slice(-49), msg.activity]);
+          }
+          break;
+        case "providerConfigLoaded":
+          setProviderConfig(msg.config);
+          break;
+        case "providerApiKeyStatus":
+          setProviderApiKeyStatus(msg.status);
+          break;
+        case "remoteInfoLoaded":
+          setRemotes(msg.remotes);
+          setBranches(msg.branches);
+          setCurrentBranch(msg.currentBranch || "");
+          setDefaultBranch(msg.defaultBranch || "main");
+          setPrRemote(msg.remotes[0]?.name || "");
+          setPrBase(msg.defaultBranch || "main");
+          setPrHead(msg.currentBranch || "");
+          break;
+        case "prContentGenerated":
+          if (msg.title) setPrTitle(msg.title);
+          if (msg.description) setPrDescription(msg.description);
+          setPrGenerating(false);
+          setShowLoadingModal(false);
+          break;
+        case "prCreated":
+          setPrCreatedMsg(msg.message || "Pull request created!");
+          setPrLink(msg.url || null);
+          setPrGenerating(false);
+          setShowLoadingModal(false);
+          break;
+        case "error":
+          setError(msg.message);
+          setLoading(false);
+          setShowLoadingModal(false);
+          break;
       }
     };
 
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      window.clearInterval(pollId);
+    };
   }, []);
 
-  const handleGenerate = () => {
-    setSuccessMessage(null);
-    vscode.postMessage({ command: "generate" });
-  };
+  const selectedCommit =
+    draftCommits.find((c) => c.id === selectedCommitId) || null;
+  const activeFiles = selectedCommit ? selectedCommit.files : stagedFiles;
 
-  const handleRegenerate = () => {
-    vscode.postMessage({ command: "regenerate" });
-  };
+  const treeClean =
+    changeNotice !== null &&
+    changeNotice.staged === 0 &&
+    changeNotice.unstaged === 0;
 
-  const handleClear = () => {
-    setPlan(null);
-    setSelectedCommits(new Set());
-    vscode.postMessage({ command: "clearPlan" });
-  };
+  const autoGeneratedRef = useRef(false);
 
-  const handleCommitAll = () => {
-    if (!plan) return;
-    setCommitProgress({
-      current: 0,
-      total: plan.commits.length,
-      subject: "Starting..."
+  // Auto-generate PR title + description from committed differences once the
+  // modal is open, remote info has populated base/head branches, and the
+  // working tree is known to be clean.
+  useEffect(() => {
+    if (!prOpen) {
+      autoGeneratedRef.current = false;
+      return;
+    }
+    if (
+      !treeClean ||
+      !prBase ||
+      !prHead ||
+      draftCommits.length === 0 ||
+      autoGeneratedRef.current
+    ) {
+      return;
+    }
+    autoGeneratedRef.current = true;
+    setPrGenerating(true);
+    setShowLoadingModal(true);
+    setLoadingVariant("pr");
+    setLoadingActivities([]);
+    sendMessage({
+      command: "generatePrContent",
+      title: true,
+      description: true,
+      plan: { commits: draftCommits, summary: "" },
+      baseBranch: prBase,
+      headBranch: prHead,
     });
-    vscode.postMessage({ command: "commit", plan });
-  };
+  }, [prOpen, treeClean, prBase, prHead, draftCommits]);
 
-  const handleCommitSelected = () => {
-    if (!plan) return;
-    const selectedPlan: CommitPlan = {
-      commits: plan.commits.filter((c) => selectedCommits.has(c.id))
-    };
-    if (selectedPlan.commits.length === 0) return;
-    setCommitProgress({
-      current: 0,
-      total: selectedPlan.commits.length,
-      subject: "Starting..."
-    });
-    vscode.postMessage({
-      command: "commitSelected",
-      plan,
-      commitIds: Array.from(selectedCommits)
+  const handleAutoCompose = () => {
+    setError(null);
+    setGlobalMessage("");
+    setLoading(true);
+    setShowLoadingModal(true);
+    setLoadingVariant("commits");
+    setLoadingActivities([]);
+    sendMessage({
+      command: "generatePlan",
+      prompt: instructions,
+      model: selectedModel,
+      instructions,
+      sampleMessage,
     });
   };
 
-  const toggleCommit = (id: string) => {
-    setSelectedCommits((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
+  const handleGenerateGlobal = () => {
+    setError(null);
+    sendMessage({
+      command: "generatePlan",
+      prompt: globalMessage || instructions,
+      model: selectedModel,
+      instructions,
+      sampleMessage,
     });
   };
 
-  const handleViewDiff = (commit: CommitGroup) => {
-    vscode.postMessage({ command: "viewDiff", commit });
+  const handleRegenerateSingle = (commit: DraftCommit) => {
+    setError(null);
+    sendMessage({
+      command: "regenerateSingle",
+      commitId: commit.id,
+      prompt: instructions,
+    });
   };
 
-  const handleOpenSCM = () => {
-    vscode.postMessage({ command: "refresh" });
+  const handleExecuteAll = () => {
+    if (draftCommits.length === 0) return;
+    setError(null);
+    const plan: DraftCommitPlan = { commits: draftCommits, summary: "" };
+    sendMessage({ command: "executeCommits", plan });
+    setDraftCommits([]);
+    setSelectedCommitId(null);
   };
 
-  const allSelected =
-    plan && plan.commits.length > 0
-      ? plan.commits.every((c) => selectedCommits.has(c.id))
-      : false;
-  const anySelected = selectedCommits.size > 0;
+  const openPrModal = () => {
+    setError(null);
+    setPrCreatedMsg(null);
+    setPrLink(null);
+    setPrOpen(true);
+    sendMessage({ command: "getRemoteInfo" });
+  };
+
+  // Generate BOTH the PR title and description in a single AI request.
+  // This avoids making 2 separate API calls (which can exhaust quotas) and
+  // ensures the AI has full context to write a coherent PR.
+  const generatePrContent = () => {
+    if (!treeClean) return;
+    setPrGenerating(true);
+    setShowLoadingModal(true);
+    setLoadingVariant("pr");
+    setLoadingActivities([]);
+    sendMessage({
+      command: "generatePrContent",
+      title: true,
+      description: true,
+      plan: { commits: draftCommits, summary: "" },
+      baseBranch: prBase,
+      headBranch: prHead,
+    });
+  };
+
+  const createPr = () => {
+    if (!prRemote || !prBase || !prHead || !prTitle.trim()) return;
+    setError(null);
+    setPrGenerating(true);
+    setShowLoadingModal(true);
+    setLoadingVariant("pr");
+    setLoadingActivities([]);
+    sendMessage({
+      command: "createPullRequest",
+      remote: prRemote,
+      baseBranch: prBase,
+      headBranch: prHead,
+      title: prTitle.trim(),
+      body: prDescription,
+    });
+  };
+
+  const handleCancel = () => {
+    setDraftCommits([]);
+    setSelectedCommitId(null);
+    setError(null);
+  };
+
+  const handleReloadChanges = () => {
+    sendMessage({ command: "loadStaged" });
+    setChangeNotice(null);
+  };
+
+  const handleProviderChange = (provider: ProviderConfig["provider"]) => {
+    const defaults = PROVIDER_DEFAULTS[provider];
+    if (!defaults) return;
+    setProviderConfig({
+      provider,
+      label: defaults.label,
+      baseUrl: defaults.baseUrl,
+      model: defaults.model || defaults.models[0] || "",
+      models: defaults.models,
+      allowCustomBaseUrl: defaults.allowCustomBaseUrl,
+      requiresApiKey: defaults.requiresApiKey,
+      recommendedModel: defaults.recommendedModel,
+      apiKey: providerConfig?.apiKey || "",
+    });
+  };
+
+  const openQuickPick = () => {
+    setQpProvider(providerConfig?.provider ?? "ollama");
+    setSetupStep(1);
+    setWizardKey("");
+    setWizardChangingKey(false);
+    setQpOpen(true);
+  };
+
+  const clearActivityLog = () => {
+    setActivityLog([]);
+    setShowActivity(false);
+  };
+
+  // Reset copy feedback after a short delay.
+  const flashCopy = (reset: () => void) => {
+    if (copyResetRef.current) clearTimeout(copyResetRef.current);
+    copyResetRef.current = setTimeout(reset, 1200);
+  };
+
+  const handleCopyAllLog = async () => {
+    const text = activityLog
+      .map((a) => `${a.timestamp} ${a.type.toUpperCase()}: ${a.message}`)
+      .join("\n");
+    if (!text.trim()) return;
+    const ok = await copyText(text);
+    if (ok) {
+      setCopiedAll(true);
+      flashCopy(() => setCopiedAll(false));
+    }
+  };
+
+  const handleCopyActivityItem = async (item: ActivityItem) => {
+    const text = `${item.timestamp} ${item.type.toUpperCase()}: ${item.message}`;
+    const ok = await copyText(text);
+    if (ok) {
+      setCopiedItemId(item.id);
+      flashCopy(() => setCopiedItemId(null));
+    }
+  };
+
+  const selectQpProvider = (provider: ProviderType) => {
+    setQpProvider(provider);
+    handleProviderChange(provider);
+    setSetupStep(2);
+  };
+
+  const selectQpModel = (model: string) => {
+    setSelectedModel(model);
+    if (providerConfig) {
+      setProviderConfig({ ...providerConfig, model });
+    }
+    const needsKey = PROVIDER_DEFAULTS[qpProvider]?.requiresApiKey;
+    if (needsKey) {
+      setSetupStep(3);
+      setWizardChangingKey(false);
+    } else {
+      setQpOpen(false);
+    }
+  };
+
+  const finishWizard = (skipSave = false) => {
+    if (providerConfig && !skipSave) {
+      const configToSave: ProviderConfig = {
+        ...providerConfig,
+        apiKey: wizardKey.trim() || providerConfig.apiKey,
+      };
+      sendMessage({
+        command: "saveProviderConfig",
+        config: configToSave,
+      });
+    }
+    setQpOpen(false);
+  };
+
+  // Sidebar handling for quick-pick state
+  const handleCommitChange = (id: string, updates: Partial<DraftCommit>) => {
+    setDraftCommits((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, ...updates } : c)),
+    );
+  };
+
+  // ── Compact sidebar variant ──
+  if (isSidebar) {
+    return (
+      <SidebarView
+        error={error}
+        loading={loading}
+        providerConfig={providerConfig}
+        selectedModel={selectedModel}
+        qpOpen={qpOpen}
+        qpProvider={qpProvider}
+        setupStep={setupStep}
+        wizardKey={wizardKey}
+        wizardChangingKey={wizardChangingKey}
+        providerApiKeyStatus={providerApiKeyStatus}
+        onOpenQp={openQuickPick}
+        onCloseQp={() => setQpOpen(false)}
+        onSetSetupStep={setSetupStep}
+        onSelectProvider={selectQpProvider}
+        onSelectModel={selectQpModel}
+        onWizardKeyChange={setWizardKey}
+        onSetWizardChangingKey={setWizardChangingKey}
+        onFinishWizard={finishWizard}
+      />
+    );
+  }
 
   return (
-    <div className="composer-container">
-      <header className="composer-header">
-        <div className="composer-title">
-          <span className="composer-icon">⚡</span>
-          <h1>Commit Composer</h1>
-        </div>
-        <div className="composer-actions">
-          {plan && (
-            <button
-              className="vscode-button secondary"
-              onClick={handleClear}
-              disabled={loading}
-            >
-              Clear
-            </button>
-          )}
-          {summary && !plan && (
-            <button
-              className="vscode-button primary"
-              onClick={handleGenerate}
-              disabled={loading}
-            >
-              {loading ? (
-                <>
-                  <span className="spinner" /> Analyzing Staged Changes...
-                </>
-              ) : (
-                <>✨ Generate Commits</>
-              )}
-            </button>
-          )}
-        </div>
-      </header>
+    <div className="composer-container flex h-screen w-screen overflow-hidden container-webview">
+      {/* Advanced Loading Modal with variant-aware title */}
+      <LoadingModal
+        show={showLoadingModal}
+        activities={loadingActivities}
+        variant={loadingVariant}
+        bodyRef={loadingModalBodyRef}
+      />
 
-      {error && (
-        <div className="error-banner">
-          <span className="error-icon">⚠️</span>
-          {error}
-          <button className="error-dismiss" onClick={() => setError(null)}>
-            ✕
-          </button>
-        </div>
-      )}
+      <LeftPanel
+        providerConfig={providerConfig}
+        selectedModel={selectedModel}
+        instructions={instructions}
+        sampleMessage={sampleMessage}
+        error={error}
+        loading={loading}
+        showActivity={showActivity}
+        activityLog={activityLog}
+        copiedAll={copiedAll}
+        copiedItemId={copiedItemId}
+        stagedFiles={stagedFiles}
+        draftCommits={draftCommits}
+        selectedCommitId={selectedCommitId}
+        onToggleActivity={() => setShowActivity((v) => !v)}
+        onOpenQuickPick={openQuickPick}
+        onInstructionsChange={setInstructions}
+        onSampleMessageChange={setSampleMessage}
+        onAutoCompose={handleAutoCompose}
+        onCopyAllLog={handleCopyAllLog}
+        onClearLog={clearActivityLog}
+        onCopyItem={handleCopyActivityItem}
+        onSelectCommit={setSelectedCommitId}
+        onExecuteAll={handleExecuteAll}
+        onOpenPr={openPrModal}
+        onCancel={handleCancel}
+      />
 
-      {successMessage && (
-        <div className="success-banner">
-          <span className="success-icon">✓</span>
-          {successMessage}
-        </div>
-      )}
+      <MainStage
+        selectedCommit={selectedCommit}
+        aiOverviewCollapsed={aiOverviewCollapsed}
+        loading={loading}
+        globalMessage={globalMessage}
+        activeFiles={activeFiles}
+        collapsedFiles={collapsedFiles}
+        changeNotice={changeNotice}
+        dirChanged={dirChanged}
+        onCommitChange={handleCommitChange}
+        onRegenerate={handleRegenerateSingle}
+        onToggleOverview={(id) =>
+          setAiOverviewCollapsed((prev) => ({
+            ...prev,
+            [id]: !prev[id],
+          }))
+        }
+        onGlobalMessageChange={setGlobalMessage}
+        onGenerateGlobal={handleGenerateGlobal}
+        onToggleCollapse={(idx) =>
+          setCollapsedFiles((prev) => {
+            const next = new Set(prev);
+            if (next.has(idx)) next.delete(idx);
+            else next.add(idx);
+            return next;
+          })
+        }
+        onCollapseAll={() =>
+          setCollapsedFiles(new Set(activeFiles.map((_, i) => i)))
+        }
+        onExpandAll={() => setCollapsedFiles(new Set())}
+        onReload={handleReloadChanges}
+        onDismissChangeNotice={() => setChangeNotice(null)}
+        onDismissDirChanged={() => setDirChanged(false)}
+      />
 
-      {commitProgress && (
-        <div className="commit-progress">
-          <div className="progress-bar">
-            <div
-              className="progress-fill"
-              style={{
-                width: `${(commitProgress.current / commitProgress.total) * 100}%`
-              }}
-            />
-          </div>
-          <div className="progress-text">
-            Committing {commitProgress.current}/{commitProgress.total}:{" "}
-            {commitProgress.subject}
-          </div>
-        </div>
-      )}
+      <PrModal
+        open={prOpen}
+        remotes={remotes}
+        branches={branches}
+        currentBranch={currentBranch}
+        defaultBranch={defaultBranch}
+        prRemote={prRemote}
+        prBase={prBase}
+        prHead={prHead}
+        prTitle={prTitle}
+        prDescription={prDescription}
+        prGenerating={prGenerating}
+        prCreatedMsg={prCreatedMsg}
+        prLink={prLink}
+        treeClean={treeClean}
+        changeNotice={changeNotice}
+        error={error}
+        draftCommits={draftCommits}
+        onClose={() => setPrOpen(false)}
+        onRemoteChange={setPrRemote}
+        onBaseChange={setPrBase}
+        onHeadChange={setPrHead}
+        onTitleChange={setPrTitle}
+        onDescriptionChange={setPrDescription}
+        onGenerateTitle={generatePrContent}
+        onGenerateDesc={generatePrContent}
+        onCreate={createPr}
+      />
 
-      {/* Staged Changes Summary */}
-      {summary ? (
-        <StagedInfo summary={summary} />
-      ) : (
-        !loading &&
-        plan === null && (
-          <div className="empty-state">
-            <div className="empty-icon">◉</div>
-            <h3>No staged changes</h3>
-            <p>
-              Stage some changes in Source Control and open Commit Composer to
-              generate commits.
-            </p>
-            <button className="vscode-button primary" onClick={handleOpenSCM}>
-              Refresh
-            </button>
-          </div>
-        )
-      )}
-
-      {/* Loading State */}
-      {loading && (
-        <div className="loading-state">
-          <div className="loading-spinner"></div>
-          <p>Analyzing staged changes and generating commit plan...</p>
-          <p className="loading-hint">
-            Using AI to decompose {summary?.fileCount || "your"} staged files
-            into logical, reviewable commits
-          </p>
-        </div>
-      )}
-
-      {/* Commit Plan */}
-      {plan && !loading && (
-        <section className="commit-plan-section">
-          <div className="commit-plan-header">
-            <h2>Generated Commits</h2>
-            <span className="commit-count-badge">
-              {plan.commits.length} commit{plan.commits.length !== 1 ? "s" : ""}
-            </span>
-          </div>
-
-          <div className="commit-list">
-            {plan.commits.map((commit, index) => (
-              <CommitCard
-                key={commit.id}
-                commit={commit}
-                index={index}
-                selected={selectedCommits.has(commit.id)}
-                onToggle={toggleCommit}
-                onViewDiff={handleViewDiff}
-              />
-            ))}
-          </div>
-
-          <div className="commit-plan-actions">
-            <button
-              className="vscode-button secondary"
-              onClick={handleRegenerate}
-              disabled={loading}
-            >
-              ↻ Regenerate
-            </button>
-            {anySelected && (
-              <button
-                className="vscode-button primary"
-                onClick={handleCommitSelected}
-                disabled={loading || commitProgress !== null}
-              >
-                Commit Selected ({selectedCommits.size})
-              </button>
-            )}
-            {allSelected && (
-              <button
-                className="vscode-button primary"
-                onClick={handleCommitAll}
-                disabled={loading || commitProgress !== null}
-              >
-                Commit All →
-              </button>
-            )}
-          </div>
-
-          {!loading && !anySelected && (
-            <p className="empty-selection-hint">
-              Select at least one commit to commit it.
-            </p>
-          )}
-        </section>
-      )}
+      <QuickPickModal
+        open={qpOpen}
+        provider={qpProvider}
+        setupStep={setupStep}
+        providerConfig={providerConfig}
+        wizardKey={wizardKey}
+        wizardChangingKey={wizardChangingKey}
+        providerApiKeyStatus={providerApiKeyStatus}
+        onClose={() => setQpOpen(false)}
+        onSetSetupStep={setSetupStep}
+        onSelectProvider={selectQpProvider}
+        onSelectModel={selectQpModel}
+        onWizardKeyChange={setWizardKey}
+        onSetWizardChangingKey={setWizardChangingKey}
+        onFinishWizard={finishWizard}
+      />
     </div>
   );
 }

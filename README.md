@@ -9,7 +9,8 @@
 - **📦 Commit Cards** — Review each proposed commit: subject, body, files, hunks, and AI reasoning.
 - **✅ Select & Commit** — Commit all generated commits, or only the ones you select.
 - **🔄 Regenerate** — Don't like the grouping? Regenerate with one click.
-- **🔌 Multiple AI Providers** — Ollama (local, free), OpenAI, and any OpenAI-compatible endpoint.
+- **🔌 Multiple AI Providers** — OpenAI, Google Gemini, Anthropic Claude, DeepSeek, Ollama (local, free), and any OpenAI-compatible endpoint.
+- **⚙️ In-App Provider Settings** — Select your provider, enter API keys, choose models, test connections, and save settings without editing JSON. Change anytime before generating commits.
 
 ## Architecture
 
@@ -97,20 +98,37 @@ The extension contributes a **webview view** to the Activity Bar (`commitCompose
 
 ## Configuration
 
-| Setting                          | Description                                        | Default            |
-|----------------------------------|----------------------------------------------------|--------------------|
-| `commitComposer.provider`        | AI provider (`ollama`, `openai`, `custom`)         | `ollama`           |
-| `commitComposer.model`           | Model name                                         | `qwen2.5-coder`    |
-| `commitComposer.baseUrl`         | OpenAI-compatible base URL                         | *(empty)*          |
-| `commitComposer.apiKey`          | API key (or `OPENAI_API_KEY` env var)              | *(empty)*          |
-| `commitComposer.maxCommits`      | Max commits AI should produce                      | `6`                |
+Most settings can be configured **in-app** via the ⚙️ settings gear in the Commit Composer header. They are also available as VS Code settings:
+
+| Setting                            | Description                                  | Default            |
+|------------------------------------|----------------------------------------------|--------------------|
+| `commitComposer.provider`          | AI provider (`openai`, `gemini`, `claude`, `deepseek`, `ollama`, `custom`) | `ollama` |
+| `commitComposer.openaiModel`       | OpenAI model                                 | `gpt-4o-mini`      |
+| `commitComposer.openaiApiKey`      | OpenAI API key (or `OPENAI_API_KEY` env var) | *(empty)*          |
+| `commitComposer.openaiBaseUrl`     | OpenAI base URL                              | `https://api.openai.com/v1` |
+| `commitComposer.geminiModel`       | Gemini model                                 | `gemini-2.5-flash` |
+| `commitComposer.geminiApiKey`      | Gemini API key (or `GEMINI_API_KEY` env var) | *(empty)*          |
+| `commitComposer.geminiBaseUrl`     | Gemini base URL                              | `https://generativelanguage.googleapis.com/v1beta` |
+| `commitComposer.claudeModel`       | Claude model                                 | `claude-3-5-sonnet-latest` |
+| `commitComposer.claudeApiKey`      | Claude API key (or `ANTHROPIC_API_KEY` env var) | *(empty)*       |
+| `commitComposer.claudeBaseUrl`     | Claude base URL                              | `https://api.anthropic.com/v1` |
+| `commitComposer.deepseekModel`     | DeepSeek model                               | `deepseek-chat`    |
+| `commitComposer.deepseekApiKey`    | DeepSeek API key (or `DEEPSEEK_API_KEY` env var) | *(empty)*      |
+| `commitComposer.deepseekBaseUrl`   | DeepSeek base URL                            | `https://api.deepseek.com/v1` |
+| `commitComposer.ollamaModel`       | Ollama model                                 | `qwen2.5-coder`    |
+| `commitComposer.ollamaBaseUrl`     | Ollama base URL                              | `http://localhost:11434` |
+| `commitComposer.customModel`       | Custom endpoint model                        | *(empty)*          |
+| `commitComposer.customBaseUrl`     | Custom OpenAI-compatible base URL            | *(empty)*          |
+| `commitComposer.customApiKey`      | Custom endpoint API key                      | *(empty)*          |
+| `commitComposer.saveApiKeys`       | Persist API keys to global settings          | `true`             |
+| `commitComposer.maxCommits`        | Max commits AI should produce                | `6`                |
 
 ### Example — Local with Ollama
 
 ```json
 {
   "commitComposer.provider": "ollama",
-  "commitComposer.model": "qwen2.5-coder"
+  "commitComposer.ollamaModel": "qwen2.5-coder"
 }
 ```
 
@@ -119,20 +137,42 @@ The extension contributes a **webview view** to the Activity Bar (`commitCompose
 ```json
 {
   "commitComposer.provider": "openai",
-  "commitComposer.model": "gpt-4o",
-  "commitComposer.apiKey": "sk-..."
+  "commitComposer.openaiModel": "gpt-4o",
+  "commitComposer.openaiApiKey": "sk-..."
 }
 ```
 
-### Example — Custom OpenAI-compatible endpoint
+### Example — Google Gemini
 
 ```json
 {
-  "commitComposer.provider": "custom",
-  "commitComposer.baseUrl": "https://my-ai-gateway.example.com/v1",
-  "commitComposer.model": "my-model"
+  "commitComposer.provider": "gemini",
+  "commitComposer.geminiModel": "gemini-2.5-pro",
+  "commitComposer.geminiApiKey": "AIza..."
 }
 ```
+
+### Example — Anthropic Claude
+
+```json
+{
+  "commitComposer.provider": "claude",
+  "commitComposer.claudeModel": "claude-3-7-sonnet-latest",
+  "commitComposer.claudeApiKey": "sk-ant-..."
+}
+```
+
+### Example — DeepSeek
+
+```json
+{
+  "commitComposer.provider": "deepseek",
+  "commitComposer.deepseekModel": "deepseek-chat",
+  "commitComposer.deepseekApiKey": "sk-..."
+}
+```
+
+> **💡 Tip:** You can also configure everything from the ⚙️ settings panel inside the extension UI — no JSON editing required. Use **Test Connection** to verify your API keys before generating commits.
 
 ## AI Prompt
 
@@ -165,14 +205,20 @@ commit-composer/
 │   ├── CommitComposerViewProvider.ts    # Sidebar webview view provider
 │   ├── ai/
 │   │   ├── AIProvider.ts                # Provider interface
+│   │   ├── BaseAIProvider.ts            # Shared JSON parsing
+│   │   ├── ProviderFactory.ts           # Provider factory
+│   │   ├── OpenAIProvider.ts            # OpenAI provider
+│   │   ├── GeminiProvider.ts            # Google Gemini provider
+│   │   ├── ClaudeProvider.ts            # Anthropic Claude provider
+│   │   ├── DeepSeekProvider.ts          # DeepSeek provider
 │   │   ├── OllamaProvider.ts            # Local Ollama provider
-│   │   ├── OpenAIProvider.ts            # OpenAI + compatible endpoints
 │   │   └── prompts.ts                   # System/user prompts
 │   ├── services/
 │   │   ├── GitService.ts                # Git CLI wrapper + diff parsing
-│   │   └── AIService.ts                 # Provider factory
+│   │   └── AIService.ts                 # Provider config + factory
 │   └── types/
-│       └── messages.ts                  # Shared message types
+│       ├── messages.ts                  # Shared message types
+│       └── provider.ts                  # Provider config types & defaults
 │
 └── webview/
     ├── package.json                     # React/Vite deps
