@@ -128,13 +128,23 @@ export function buildPrPrompt(
     ].join("\n")
   );
 
+  parts.push(
+    [
+      'CRITICAL FORMATTING REQUIREMENTS:',
+      "1. Use RAW hash characters (#, ###) for Markdown headings - NOT URL-encoded sequences like %23. NEVER write %23 - always write the literal # character.",
+      '2. Use RAW newlines (\\n) between paragraphs and sections. Never output literal "\\n" escape sequences.',
+      "3. Use standard Markdown: ### Section Title for headings, - bullet for lists, **bold** for emphasis.",
+      "4. Do NOT wrap the description in HTML tags or code fences."
+    ].join("\n")
+  );
+
   parts.push(`The planned commits are:\n${commits.map((c) => `- ${c.subject}: ${c.overview}`).join("\n")}`);
 
   parts.push(`Here is the complete diff:\n\n\`\`\`\n${diff}\n\`\`\``);
 
   parts.push(
-    `Respond ONLY with valid JSON:\n` +
-    `{\n  "title": "feat: ...",\n  "description": "\\"\\"\\"\\nYour full Markdown PR body here\\n\\"\\"\\""\n}`
+    `Respond ONLY with valid JSON. In the JSON, escape any double-quotes inside the Markdown body with backslashes, but keep raw # characters for headings and raw newlines (\\n in JSON). Your response must contain actual # for headings - never %23:\n` +
+    `{ "title": "feat: ...", "description": "Your full Markdown PR body here with ### headings" }`
   );
 
   return parts.join("\n\n");

@@ -508,7 +508,7 @@ export class CommitComposerPanel {
           "--base", baseBranch,
           "--head", headBranch,
           "--title", title,
-          "--body", JSON.stringify(body)
+          "--body", body
         ]);
         const urlMatch = ghOutput.trim();
         this.postMessage({ command: "prCreated", url: urlMatch.startsWith("http") ? urlMatch : undefined, message: urlMatch });
@@ -523,7 +523,12 @@ export class CommitComposerPanel {
       let compareUrl = "";
       if (remoteInfo) {
         const url = remoteInfo.url.replace(/\.git$/, "").replace(/^git@([^:]+):/, "https://$1/");
-        compareUrl = `${url}/compare/${baseBranch}...${headBranch}?expand=1&title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+        // Title/body must be URL-encoded once only. If the AI model happened to
+        // include any URL-encoded sequences (e.g. `%23`), decode them first so
+        // we don't double-encode and corrupt the PR content.
+        const cleanTitle = this.decodeUriEntities(title);
+        const cleanBody = this.decodeUriEntities(body);
+        compareUrl = `${url}/compare/${baseBranch}...${headBranch}?expand=1&title=${encodeURIComponent(cleanTitle)}&body=${encodeURIComponent(cleanBody)}`;
       }
 
       if (compareUrl) {
@@ -646,6 +651,19 @@ export class CommitComposerPanel {
       return out.join("\n");
     });
     return wrapped.join("\n\n");
+  }
+
+  /**
+   * Decode any URL-encoded entities that may have been introduced by an AI
+   * model outputting literal `%23` sequences instead of raw `#` characters.
+   * This prevents double-encoding when building compare URLs.
+   */
+  private decodeUriEntities(text: string): string {
+    try {
+      return decodeURIComponent(text);
+    } catch {
+      return text;
+    }
   }
 
   private normalizeType(type: string): string {

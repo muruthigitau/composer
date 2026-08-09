@@ -64,6 +64,34 @@ export abstract class BaseAIProvider {
   }
 
   /**
+   * Decode URL-encoded characters that AI models sometimes produce in place
+   * of raw Markdown (e.g. `%23` for `#`). This ensures the PR title/description
+   * render correctly in the modal and compare URL.
+   */
+  protected sanitizePrText(text: string): string {
+    // First fix up double-escaped sequences from models that output \n literally.
+    let out = text
+      .replace(/\\n/g, "\n")
+      .replace(/\\"/g, '"')
+      .replace(/\\'/g, "'");
+
+    // Fix raw %-encoded sequences that models sometimes emit.
+    // Only decode what maps to printable Markdown characters we care about.
+    const percentEncoded: Record<string, string> = {
+      "%23": "#",
+      "%20": " ",
+      "%2D": "-",
+      "%28": "(",
+      "%29": ")"
+    };
+    for (const [enc, dec] of Object.entries(percentEncoded)) {
+      out = out.split(enc).join(dec);
+    }
+
+    return out;
+  }
+
+  /**
    * Parse the AI response into a PR title/description JSON object.
    */
   protected parsePrJson(rawResponse: string): PrContent {
@@ -80,8 +108,8 @@ export abstract class BaseAIProvider {
     try {
       const parsed = JSON.parse(clean) as PrContent;
       return {
-        title: String(parsed.title || "").trim(),
-        description: String(parsed.description || "").trim()
+        title: this.sanitizePrText(String(parsed.title || "").trim()),
+        description: this.sanitizePrText(String(parsed.description || "").trim())
       };
     } catch (error) {
       if (error instanceof SyntaxError) {
