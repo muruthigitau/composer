@@ -145,7 +145,7 @@ export class CommitComposerPanel {
         break;
       }
       case "generatePrContent": {
-        await this.handleGeneratePrContent(message.title, message.description, message.plan);
+        await this.handleGeneratePrContent(message.title, message.description, message.plan, message.baseBranch, message.headBranch);
         break;
       }
       case "createPullRequest": {
@@ -404,19 +404,54 @@ export class CommitComposerPanel {
 
   /**
    * Generate PR title/description via AI and send back to the webview.
+   *
+   * PR content is generated from the *committed* differences between the
+   * base and head branches (`git diff base...head`), NOT from the staged or
+   * unstaged changes. This mirrors exactly what a normal Pull Request would
+   * contain. Generation is only permitted when the working tree is completely
+   * clean (0 staged + 0 unstaged changes).
    */
   private async handleGeneratePrContent(
     titleOnly?: boolean,
     descOnly?: boolean,
-    plan?: DraftCommitPlan
+    plan?: DraftCommitPlan,
+    baseBranch?: string,
+    headBranch?: string
   ): Promise<void> {
     try {
       this.postMessage({ command: "setLoading", value: true });
-      this.logActivity("Reading staged diff for PR content…", "loading");
+      this.logActivity("Checking that the working tree is clean…", "loading");
 
-      const diff = await this.gitService.getStagedDiff();
+      // Only allow PR content generation when there are no staged or unstaged
+      // changes. We generate from committed differences only, so uncommitted
+      // work would not be represented in the PR and should be committed first.
+      const clean = await this.gitService.isWorkingTreeClean();
+      if (!clean) {
+        const status = await this.gitService.getStatusCounts();
+        throw new Error(
+          `Working tree is not clean (${status.staged} staged, ${status.unstaged} unstaged). ` +
+            "Commit or stash your changes before generating PR content — " +
+            "PR content is generated from committed differences only."
+        );
+      }
+
+      const currentBranch =
+        headBranch || (await this.gitService.getCurrentBranch());
+      if (!currentBranch) {
+        throw new Error(
+          "No current branch found. Check out the branch you want to open a PR for."
+        );
+      }
+      const resolvedBase =
+        baseBranch || (await this.gitService.getDefaultBranch());
+
+      this.logActivity(`Reading committed diff ${resolvedBase}...${currentBranch}…`, "loading");
+      const diff = await this.gitService.getBranchDiff(resolvedBase, currentBranch);
       if (!diff.trim()) {
-        throw new Error("No staged changes found. Stage some changes first.");
+        throw new Error(
+          `No committed differences found between "${resolvedBase}" and "${currentBranch}". ` +
+            "Nothing to include in a PR."
+        );
       }
 
       const commits = (plan?.commits || []).map((c) => ({
@@ -425,11 +460,9 @@ export class CommitComposerPanel {
       }));
 
       this.logActivity("Generating PR title and description…", "loading");
-      const currentBranch = await this.gitService.getCurrentBranch();
-      const defaultBranch = await this.gitService.getDefaultBranch();
       const content = await this.aiService.generatePrContent(diff, commits, {
         branch: currentBranch,
-        baseBranch: defaultBranch,
+        baseBranch: resolvedBase,
         repoName: vscode.workspace.workspaceFolders?.[0]?.name
       });
 

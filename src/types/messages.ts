@@ -127,7 +127,14 @@ export type WebviewToExtensionMessage =
   | { command: "promptApiKey"; provider: string; label: string; requiresApiKey: boolean }
   | { command: "openEditor" }
   | { command: "getRemoteInfo" }
-  | { command: "generatePrContent"; title?: boolean; description?: boolean; plan?: DraftCommitPlan }
+  | {
+      command: "generatePrContent";
+      title?: boolean;
+      description?: boolean;
+      plan?: DraftCommitPlan;
+      baseBranch?: string;
+      headBranch?: string;
+    }
   | {
       command: "createPullRequest";
       remote: string;

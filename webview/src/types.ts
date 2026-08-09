@@ -282,6 +282,8 @@ export type WebviewToExtensionMessage =
       title?: boolean;
       description?: boolean;
       plan?: DraftCommitPlan;
+      baseBranch?: string;
+      headBranch?: string;
     }
   | {
       command: "createPullRequest";

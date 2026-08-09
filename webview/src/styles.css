@@ -1023,6 +1023,16 @@ textarea {
   align-self: flex-start;
 }
 
+.pr-clean-hint {
+  padding: 10px 12px;
+  background: var(--vscode-inputValidation-warningBackground, rgba(255, 200, 50, 0.1));
+  border: 1px solid var(--vscode-inputValidation-warningBorder, rgba(255, 200, 50, 0.5));
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
 .pr-modal-footer {
   flex-shrink: 0;
   display: flex;

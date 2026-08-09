@@ -138,6 +138,32 @@ export class GitService {
   }
 
   /**
+   * Check if the working tree is completely clean: 0 staged and 0 unstaged
+   * changes (including untracked files).
+   */
+  public async isWorkingTreeClean(): Promise<boolean> {
+    const { staged, unstaged } = await this.getStatusCounts();
+    return staged === 0 && unstaged === 0;
+  }
+
+  /**
+   * Get the diff between two branches compared at their merge-base.
+   *
+   * Uses `git diff base...head` (three-dot), which computes the diff from the
+   * merge-base of `base` and `head` to the tip of `head`. This represents
+   * exactly the commits that `head` introduced above `base` — i.e. what a
+   * normal Pull Request would contain. It is entirely independent of any
+   * staged or unstaged working-tree changes.
+   */
+  public async getBranchDiff(baseBranch: string, headBranch: string): Promise<string> {
+    return await this.exec([
+      "diff",
+      `${baseBranch}...${headBranch}`,
+      "--no-color"
+    ]);
+  }
+
+  /**
    * Parse a unified diff into per-file, per-hunk structures.
    * This enables precise commit grouping at hunk granularity.
    */
