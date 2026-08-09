@@ -450,26 +450,401 @@
   /* Any remaining complex CSS that can't be expressed with Tailwind can go here */
 }
 
-/* ── Responsive container-query stacking ── */
-@container webview (max-width: 820px) {
-  .composer-container {
-    flex-direction: column;
+  /* ── Responsive container-query stacking ── */
+  @container webview (max-width: 820px) {
+    .composer-container {
+      flex-direction: column;
+    }
+    .left-panel {
+      width: 100%;
+      max-width: none;
+      height: 45%;
+      border-right: none;
+      border-bottom: 1px solid var(--border-color);
+    }
+    .main-stage {
+      height: 55%;
+    }
   }
-  .left-panel {
-    width: 100%;
-    max-width: none;
-    height: 45%;
-    border-right: none;
-    border-bottom: 1px solid var(--border-color);
+
+  /* ═══ Advanced Loading Modal Styles ═══ */
+
+  @keyframes loader-topbar-sweep {
+    0% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0% 50%;
+    }
   }
-  .main-stage {
-    height: 55%;
+
+  @keyframes loader-orbit-rotate {
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
   }
-}
+
+  @keyframes loader-core-pulse {
+    0%,
+    100% {
+      transform: scale(1);
+      box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.4);
+    }
+    50% {
+      transform: scale(1.12);
+      box-shadow: 0 0 0 10px rgba(56, 189, 248, 0);
+    }
+  }
+
+  @keyframes loader-satellite-spin {
+    0% {
+      transform: rotate(0deg) translateX(22px) rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg) translateX(22px) rotate(-360deg);
+    }
+  }
+
+  @keyframes loader-title-shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+
+  @keyframes loader-pulse-dot {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+      box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.5);
+    }
+    50% {
+      opacity: 0.6;
+      transform: scale(0.8);
+      box-shadow: 0 0 0 6px rgba(74, 222, 128, 0);
+    }
+  }
+
+  @keyframes loader-progress-bar {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(400%);
+    }
+  }
+
+  @keyframes loader-item-slide-in {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes loader-footer-scroll {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  @keyframes loader-mini-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes loader-ambient-pulse {
+    0%,
+    100% {
+      opacity: 0.5;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.2);
+    }
+  }
+
+  /* Surface gradient */
+  .loader-modal-surface {
+    background: linear-gradient(
+      180deg,
+      var(--bg-card) 0%,
+      var(--bg-secondary) 100%
+    );
+    position: relative;
+    animation: modal-fade-in 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* Animated gradient top border */
+  .loader-top-bar {
+    height: 3px;
+    flex-shrink: 0;
+    background: linear-gradient(90deg, #38bdf8, #818cf8, #a78bfa, #38bdf8);
+    background-size: 300% 100%;
+    animation: loader-topbar-sweep 3s ease infinite;
+  }
+
+  .loader-top-bar.loader-accent-pr {
+    background: linear-gradient(90deg, #f59e0b, #ef4444, #f97316, #f59e0b);
+    background-size: 300% 100%;
+    animation: loader-topbar-sweep 3s ease infinite;
+  }
+
+  /* Ambient glow behind the loader header */
+  .loader-ambient-glow {
+    position: absolute;
+    top: -60px;
+    right: -60px;
+    width: 200px;
+    height: 200px;
+    background: radial-gradient(
+      circle,
+      rgba(56, 189, 248, 0.15) 0%,
+      transparent 70%
+    );
+    pointer-events: none;
+    animation: loader-ambient-pulse 3.5s ease-in-out infinite;
+  }
+
+  .loader-ambient-glow.loader-accent-pr {
+    background: radial-gradient(
+      circle,
+      rgba(245, 158, 11, 0.15) 0%,
+      transparent 70%
+    );
+  }
+
+  /* Orbiting ring loader */
+  .loader-orbit-wrap {
+    width: 48px;
+    height: 48px;
+  }
+
+  .loader-orbit-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px solid rgba(56, 189, 248, 0.15);
+    border-top-color: #38bdf8;
+    animation: loader-orbit-rotate 1.2s linear infinite;
+  }
+
+  .loader-accent-pr .loader-orbit-ring {
+    border-color: rgba(245, 158, 11, 0.15);
+    border-top-color: #f59e0b;
+  }
+
+  .loader-orbit-satellite {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 14px;
+    height: 14px;
+    margin: -7px 0 0 -7px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #7dd3fc, #0284c7);
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.6);
+    animation: loader-satellite-spin 2.4s ease-in-out infinite;
+    z-index: 3;
+  }
+
+  .loader-accent-pr .loader-orbit-satellite {
+    background: radial-gradient(circle at 30% 30%, #fcd34d, #d97706);
+    box-shadow: 0 0 12px rgba(245, 158, 11, 0.6);
+  }
+
+  .loader-core {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--bg-card);
+    border: 1.5px solid rgba(56, 189, 248, 0.3);
+    color: #38bdf8;
+    font-size: 11px;
+    z-index: 2;
+    animation: loader-core-pulse 2s ease-in-out infinite;
+  }
+
+  .loader-accent-pr .loader-core {
+    border-color: rgba(245, 158, 11, 0.3);
+    color: #f59e0b;
+    animation: loader-core-pulse 2s ease-in-out infinite;
+    animation-name: loader-core-pulse-pr;
+  }
+
+  @keyframes loader-core-pulse-pr {
+    0%,
+    100% {
+      transform: translate(-50%, -50%) scale(1);
+      box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+    }
+    50% {
+      transform: translate(-50%, -50%) scale(1.12);
+      box-shadow: 0 0 0 10px rgba(245, 158, 11, 0);
+    }
+  }
+
+  /* Shimmering title */
+  .loader-title-shimmer {
+    background: linear-gradient(90deg, var(--text-primary) 0%, #38bdf8 50%, var(--text-primary) 100%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: loader-title-shimmer 3s linear infinite;
+  }
+
+  /* Status pill */
+  .loader-status-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+  }
+
+  .loader-pulse-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4ade80;
+    animation: loader-pulse-dot 1.5s ease-in-out infinite;
+  }
+
+  .loader-status-text {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  /* Placeholder progress bars */
+  .loader-progress-track {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--bg-input);
+    overflow: hidden;
+    position: relative;
+  }
+
+  .loader-progress-bar {
+    height: 100%;
+    width: 30%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, #38bdf8, transparent);
+    animation: loader-progress-bar 1.5s ease-in-out infinite;
+  }
+
+  .loader-commits-bar {
+    background: linear-gradient(90deg, transparent, #38bdf8, transparent);
+  }
+
+  .loader-progress-bar.loader-delay-1 {
+    animation-delay: 0.3s;
+  }
+  .loader-progress-bar.loader-delay-2 {
+    animation-delay: 0.6s;
+  }
+
+  /* Typewriter / typing indicator */
+  .loader-typewriter {
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  .loader-dots {
+    display: inline-flex;
+    gap: 3px;
+  }
+
+  .loader-dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #38bdf8;
+    display: inline-block;
+    animation: loader-pulse-dot 1.4s ease-in-out infinite;
+  }
+
+  /* Activity item animations */
+  .loader-activity-item {
+    animation: loader-item-slide-in 0.25s ease-out both;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .loader-item-loading::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent, rgba(56, 189, 248, 0.06), transparent);
+    transform: translateX(-100%);
+    animation: loader-progress-bar 2s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  /* Mini spinner for loading activity icon */
+  .loader-mini-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--border-color);
+    border-top-color: #38bdf8;
+    border-radius: 50%;
+    animation: loader-mini-spin 0.8s linear infinite;
+    vertical-align: middle;
+  }
+
+  /* Footer progress line */
+  .loader-modal-footer {
+    position: relative;
+    background: var(--bg-input);
+  }
+
+  .loader-footer-progress {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, #38bdf8, transparent);
+    animation: loader-footer-scroll 1.8s ease-in-out infinite;
+  }
+
+  .loader-footer-progress.loader-accent-pr {
+    background: linear-gradient(90deg, transparent, #f59e0b, transparent);
+  }
 
 /* ── Native VS Code Scrollbars for specific elements ── */
 .diff-viewer-list::-webkit-scrollbar,
-.loading-modal-body::-webkit-scrollbar,
+.loader-modal-body::-webkit-scrollbar,
 .activity-body::-webkit-scrollbar,
 .quick-pick-body::-webkit-scrollbar,
 .pr-modal-body::-webkit-scrollbar {
@@ -477,14 +852,14 @@
   height: 12px;
 }
 .diff-viewer-list::-webkit-scrollbar-track,
-.loading-modal-body::-webkit-scrollbar-track,
+.loader-modal-body::-webkit-scrollbar-track,
 .activity-body::-webkit-scrollbar-track,
 .quick-pick-body::-webkit-scrollbar-track,
 .pr-modal-body::-webkit-scrollbar-track {
   background: transparent;
 }
 .diff-viewer-list::-webkit-scrollbar-thumb,
-.loading-modal-body::-webkit-scrollbar-thumb,
+.loader-modal-body::-webkit-scrollbar-thumb,
 .activity-body::-webkit-scrollbar-thumb,
 .quick-pick-body::-webkit-scrollbar-thumb,
 .pr-modal-body::-webkit-scrollbar-thumb {
@@ -494,7 +869,7 @@
   background-clip: content-box;
 }
 .diff-viewer-list::-webkit-scrollbar-thumb:hover,
-.loading-modal-body::-webkit-scrollbar-thumb:hover,
+.loader-modal-body::-webkit-scrollbar-thumb:hover,
 .activity-body::-webkit-scrollbar-thumb:hover,
 .quick-pick-body::-webkit-scrollbar-thumb:hover,
 .pr-modal-body::-webkit-scrollbar-thumb:hover {
