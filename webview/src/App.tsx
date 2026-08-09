@@ -1,4 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { LeftPanel } from "./components/LeftPanel";
+import { LoadingModal } from "./components/LoadingModal";
+import { MainStage } from "./components/MainStage";
+import { PrModal } from "./components/PrModal";
+import { SidebarView } from "./components/SidebarView";
+import { copyText } from "./lib/clipboard";
+import { isSidebar, sendMessage } from "./lib/vscodeApi";
 import {
   ActivityItem,
   DraftCommit,
@@ -9,14 +16,6 @@ import {
   ProviderConfig,
   ProviderType,
 } from "./types";
-import { isSidebar, sendMessage } from "./lib/vscodeApi";
-import { copyText } from "./lib/clipboard";
-import { SidebarView } from "./components/SidebarView";
-import { LeftPanel } from "./components/LeftPanel";
-import { MainStage } from "./components/MainStage";
-import { LoadingModal } from "./components/LoadingModal";
-import { QuickPickModal } from "./components/QuickPickModal";
-import { PrModal } from "./components/PrModal";
 
 export function App() {
   const [stagedFiles, setStagedFiles] = useState<FileDiff[]>([]);
@@ -24,7 +23,7 @@ export function App() {
   const [selectedCommitId, setSelectedCommitId] = useState<string | null>(null);
   const [instructions, setInstructions] = useState("");
   const [sampleMessage, setSampleMessage] = useState("");
-  const [selectedModel, setSelectedModel] = useState("Gemini 3.1 Flash-Lite");
+  const [selectedModel, setSelectedModel] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [globalMessage, setGlobalMessage] = useState("");
@@ -33,6 +32,9 @@ export function App() {
   const [providerConfig, setProviderConfig] = useState<ProviderConfig | null>(
     null,
   );
+  // Ref mirroring providerConfig so async handlers always read the latest value.
+  const providerConfigRef = useRef<ProviderConfig | null>(null);
+  providerConfigRef.current = providerConfig;
 
   // Maps provider type -> whether an API key is already stored for it.
   const [providerApiKeyStatus, setProviderApiKeyStatus] = useState<
@@ -76,7 +78,9 @@ export function App() {
   >({});
 
   // Loading modal activities
-  const [loadingActivities, setLoadingActivities] = useState<ActivityItem[]>([]);
+  const [loadingActivities, setLoadingActivities] = useState<ActivityItem[]>(
+    [],
+  );
   const [showLoadingModal, setShowLoadingModal] = useState(false);
   const [loadingVariant, setLoadingVariant] = useState<"commits" | "pr">(
     "commits",
@@ -175,6 +179,10 @@ export function App() {
           break;
         case "providerConfigLoaded":
           setProviderConfig(msg.config);
+          // Keep the UI's selected model in sync with what's actually persisted.
+          if (msg.config.model) {
+            setSelectedModel(msg.config.model);
+          }
           break;
         case "providerApiKeyStatus":
           setProviderApiKeyStatus(msg.status);
@@ -370,7 +378,7 @@ export function App() {
       allowCustomBaseUrl: defaults.allowCustomBaseUrl,
       requiresApiKey: defaults.requiresApiKey,
       recommendedModel: defaults.recommendedModel,
-      apiKey: providerConfig?.apiKey || "",
+      apiKey: providerConfigRef.current?.apiKey || "",
     });
   };
 
@@ -422,23 +430,42 @@ export function App() {
 
   const selectQpModel = (model: string) => {
     setSelectedModel(model);
-    if (providerConfig) {
-      setProviderConfig({ ...providerConfig, model });
-    }
-    const needsKey = PROVIDER_DEFAULTS[qpProvider]?.requiresApiKey;
-    if (needsKey) {
-      setSetupStep(3);
-      setWizardChangingKey(false);
-    } else {
-      setQpOpen(false);
+    const current = providerConfigRef.current;
+    if (current) {
+      const nextConfig = { ...current, model };
+      setProviderConfig(nextConfig);
+
+      const needsKey = PROVIDER_DEFAULTS[qpProvider]?.requiresApiKey;
+      if (needsKey) {
+        setSetupStep(3);
+        setWizardChangingKey(false);
+      } else {
+        // Persist immediately for providers without an API-key step
+        setQpOpen(false);
+        sendMessage({
+          command: "saveProviderConfig",
+          config: {
+            ...nextConfig,
+            apiKey: current.apiKey || "",
+            // Always persist the Google provider under the canonical key.
+            provider: qpProvider,
+          },
+        });
+      }
     }
   };
 
-  const finishWizard = (skipSave = false) => {
-    if (providerConfig && !skipSave) {
+  // Persist the current provider selection (provider/model/key) and close the
+  // wizard. This is shared by BOTH the header "✓ Done" button (onDone) and the
+  // final "Done" button so provider details are NEVER lost — including for
+  // providers that require an API-key step.
+  const saveAndCloseQuickPick = () => {
+    const current = providerConfigRef.current;
+    if (current) {
       const configToSave: ProviderConfig = {
-        ...providerConfig,
-        apiKey: wizardKey.trim() || providerConfig.apiKey,
+        ...current,
+        // Preserve any already-stored key when the user didn't type a new one.
+        apiKey: wizardKey.trim() || current.apiKey,
       };
       sendMessage({
         command: "saveProviderConfig",
@@ -446,6 +473,14 @@ export function App() {
       });
     }
     setQpOpen(false);
+  };
+
+  const finishWizard = (skipSave = false) => {
+    if (skipSave) {
+      setQpOpen(false);
+      return;
+    }
+    saveAndCloseQuickPick();
   };
 
   // Sidebar handling for quick-pick state
@@ -470,7 +505,7 @@ export function App() {
         wizardChangingKey={wizardChangingKey}
         providerApiKeyStatus={providerApiKeyStatus}
         onOpenQp={openQuickPick}
-        onCloseQp={() => setQpOpen(false)}
+        onCloseQp={saveAndCloseQuickPick}
         onSetSetupStep={setSetupStep}
         onSelectProvider={selectQpProvider}
         onSelectModel={selectQpModel}
@@ -505,8 +540,21 @@ export function App() {
         stagedFiles={stagedFiles}
         draftCommits={draftCommits}
         selectedCommitId={selectedCommitId}
+        qpOpen={qpOpen}
+        qpProvider={qpProvider}
+        setupStep={setupStep}
+        wizardKey={wizardKey}
+        wizardChangingKey={wizardChangingKey}
+        providerApiKeyStatus={providerApiKeyStatus}
         onToggleActivity={() => setShowActivity((v) => !v)}
         onOpenQuickPick={openQuickPick}
+        onCloseQuickPick={saveAndCloseQuickPick}
+        onSetSetupStep={setSetupStep}
+        onSelectProvider={selectQpProvider}
+        onSelectModel={selectQpModel}
+        onWizardKeyChange={setWizardKey}
+        onSetWizardChangingKey={setWizardChangingKey}
+        onFinishWizard={finishWizard}
         onInstructionsChange={setInstructions}
         onSampleMessageChange={setSampleMessage}
         onAutoCompose={handleAutoCompose}
@@ -584,22 +632,6 @@ export function App() {
         onCreate={createPr}
       />
 
-      <QuickPickModal
-        open={qpOpen}
-        provider={qpProvider}
-        setupStep={setupStep}
-        providerConfig={providerConfig}
-        wizardKey={wizardKey}
-        wizardChangingKey={wizardChangingKey}
-        providerApiKeyStatus={providerApiKeyStatus}
-        onClose={() => setQpOpen(false)}
-        onSetSetupStep={setSetupStep}
-        onSelectProvider={selectQpProvider}
-        onSelectModel={selectQpModel}
-        onWizardKeyChange={setWizardKey}
-        onSetWizardChangingKey={setWizardChangingKey}
-        onFinishWizard={finishWizard}
-      />
     </div>
   );
 }
