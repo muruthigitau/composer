@@ -4,14 +4,14 @@ import { CommitPlan } from "../types/messages";
 import { BaseAIProvider } from "./BaseAIProvider";
 
 /**
- * OpenAIProvider uses the OpenAI Chat Completions API.
- * Also works with any OpenAI-compatible endpoint (custom baseUrl).
+ * DeepSeekProvider uses the DeepSeek Chat Completions API.
+ * API is OpenAI-compatible.
  */
-export class OpenAIProvider extends BaseAIProvider implements AIProvider {
+export class DeepSeekProvider extends BaseAIProvider implements AIProvider {
   constructor(
     private model: string,
     private apiKey: string,
-    private baseUrl: string = "https://api.openai.com/v1",
+    private baseUrl: string = "https://api.deepseek.com/v1",
     private maxCommits: number = 6
   ) {
     super();
@@ -47,7 +47,7 @@ export class OpenAIProvider extends BaseAIProvider implements AIProvider {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`OpenAI request failed with status ${response.status}: ${errorText}`);
+      throw new Error(`DeepSeek request failed with status ${response.status}: ${errorText}`);
     }
 
     const data = (await response.json()) as {
@@ -56,7 +56,7 @@ export class OpenAIProvider extends BaseAIProvider implements AIProvider {
 
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
-      throw new Error("OpenAI returned empty response");
+      throw new Error("DeepSeek returned empty response");
     }
 
     return this.parsePlan(content);
@@ -91,14 +91,13 @@ export class OpenAIProvider extends BaseAIProvider implements AIProvider {
       })
     });
     if (!response.ok) {
-      throw new Error(`OpenAI PR request failed: ${await response.text()}`);
+      throw new Error(`DeepSeek PR request failed: ${await response.text()}`);
     }
     const data = (await response.json()) as {
       choices: Array<{ message: { content: string } }>;
     };
     const content = data.choices?.[0]?.message?.content;
-    if (!content) throw new Error("OpenAI returned empty PR response");
+    if (!content) throw new Error("DeepSeek returned empty PR response");
     return this.parsePrJson(content);
   }
-
 }
