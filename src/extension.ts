@@ -23,7 +23,7 @@ export function activate(context: vscode.ExtensionContext) {
   if (workspaceFolder) {
     const viewProvider = vscode.window.registerWebviewViewProvider(
       CommitComposerViewProvider.viewType,
-      new CommitComposerViewProvider(context.extensionUri, workspaceFolder)
+      new CommitComposerViewProvider(context.extensionUri, workspaceFolder, context.globalStorageUri.fsPath)
     );
     context.subscriptions.push(viewProvider);
   }

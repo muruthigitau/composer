@@ -23,10 +23,11 @@ export class CommitComposerViewProvider implements vscode.WebviewViewProvider {
 
   constructor(
     private readonly extensionUri: vscode.Uri,
-    workspacePath: string
+    workspacePath: string,
+    storagePath: string
   ) {
     this.gitService = new GitService(workspacePath);
-    this.aiService = new AIService();
+    this.aiService = new AIService(storagePath);
   }
 
   resolveWebviewView(
@@ -159,13 +160,23 @@ export class CommitComposerViewProvider implements vscode.WebviewViewProvider {
       const trimKey = key.trim();
       if (!trimKey) return;
 
-      const vsConfig = vscode.workspace.getConfiguration("commitComposer");
-      await vsConfig.update(
-        `${provider}ApiKey`,
-        trimKey,
-        vscode.ConfigurationTarget.Global
-      );
-      this.aiService.refreshProvider();
+      // Save the key to BOTH the config file (source of truth) and settings.
+      const currentConfig = this.aiService.getProviderConfig();
+      if (currentConfig.provider === provider) {
+        await this.aiService.saveProviderConfig({
+          ...currentConfig,
+          apiKey: trimKey
+        });
+      } else {
+        // Fallback: just write the provider-specific setting.
+        const vsConfig = vscode.workspace.getConfiguration("commitComposer");
+        await vsConfig.update(
+          `${provider}ApiKey`,
+          trimKey,
+          vscode.ConfigurationTarget.Global
+        );
+        this.aiService.refreshProvider();
+      }
       await this.handleGetProviderConfig();
       this.postMessage({ command: "apiKeyPrompted", provider, label });
     } catch (error) {
@@ -311,6 +322,8 @@ export class CommitComposerViewProvider implements vscode.WebviewViewProvider {
   private async handleSaveProviderConfig(config: ProviderConfig): Promise<void> {
     try {
       await this.aiService.saveProviderConfig(config);
+      // Send the freshly persisted config back so the webview UI stays in sync.
+      await this.handleGetProviderConfig();
       vscode.window.showInformationMessage(
         `Commit Composer: Provider settings saved (${config.label}).`
       );

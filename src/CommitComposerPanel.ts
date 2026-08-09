@@ -32,7 +32,9 @@ export class CommitComposerPanel {
   ) {
     this.panel = panel;
     this.gitService = new GitService(workspacePath);
-    this.aiService = new AIService();
+    // Use the shared extension storage dir so the config FILE is consistent
+    // across the editor-tab and sidebar views.
+    this.aiService = new AIService(context.globalStorageUri.fsPath);
 
     this.panel.webview.html = this.getHtml();
     this.panel.webview.onDidReceiveMessage(
@@ -195,16 +197,24 @@ export class CommitComposerPanel {
         return;
       }
 
-      // Save to the provider-specific setting.
-      const vsConfig = vscode.workspace.getConfiguration("commitComposer");
-      await vsConfig.update(
-        `${provider}ApiKey`,
-        trimKey,
-        vscode.ConfigurationTarget.Global
-      );
-
-      // Refresh the AI service so the new key is picked up.
-      this.aiService.refreshProvider();
+      // Save the key to BOTH the config file (source of truth) and settings.
+      const currentConfig = this.aiService.getProviderConfig();
+      if (currentConfig.provider === provider) {
+        await this.aiService.saveProviderConfig({
+          ...currentConfig,
+          apiKey: trimKey
+        });
+      } else {
+        // Fallback: just write the provider-specific setting.
+        const vsConfig = vscode.workspace.getConfiguration("commitComposer");
+        await vsConfig.update(
+          `${provider}ApiKey`,
+          trimKey,
+          vscode.ConfigurationTarget.Global
+        );
+        // Refresh the AI service so the new key is picked up.
+        this.aiService.refreshProvider();
+      }
 
       // Send the fresh config back to the webview.
       await this.handleGetProviderConfig();
@@ -584,6 +594,8 @@ export class CommitComposerPanel {
   private async handleSaveProviderConfig(config: ProviderConfig): Promise<void> {
     try {
       await this.aiService.saveProviderConfig(config);
+      // Send the freshly persisted config back so the webview UI stays in sync.
+      await this.handleGetProviderConfig();
       vscode.window.showInformationMessage(
         `Commit Composer: Provider settings saved (${config.label}).`
       );
