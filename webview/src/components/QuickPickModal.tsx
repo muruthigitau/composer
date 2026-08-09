@@ -173,21 +173,10 @@ export function QuickPickModal({
                   >
                     Change Key
                   </button>
-                  <button
-                    className="btn primary-btn flex-1 bg-button-bg text-button-fg rounded-md px-3.5 py-2 shadow-btn hover:bg-button-hover transition-colors duration-150"
-                    onClick={onFinishWizard}
-                  >
-                    Done
-                  </button>
+                  <></>
                 </>
               ) : (
-                <button
-                  className="btn primary-btn flex-1 bg-button-bg text-button-fg rounded-md px-3.5 py-2 shadow-btn hover:bg-button-hover transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-                  onClick={onFinishWizard}
-                  disabled={!wizardKey.trim()}
-                >
-                  Done
-                </button>
+                <></>
               )}
             </div>
           </div>
