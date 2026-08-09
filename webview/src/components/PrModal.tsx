@@ -213,11 +213,11 @@ export function PrModal({
               disabled={prGenerating || !treeClean}
               title={
                 treeClean
-                  ? "Generate title from committed differences"
+                  ? "Generate title (and description) from committed differences"
                   : "Commit/stash changes first to enable AI title generation"
               }
             >
-              {prGenerating ? "…" : "✨ Title"}
+              {prGenerating ? "…" : "✨ Generate"}
             </button>
           </div>
 
@@ -237,11 +237,11 @@ export function PrModal({
               disabled={prGenerating || !treeClean}
               title={
                 treeClean
-                  ? "Generate description from committed differences"
+                  ? "Generate description (and title) from committed differences"
                   : "Commit/stash changes first to enable AI description generation"
               }
             >
-              {prGenerating ? "…" : "✨ Desc"}
+              {prGenerating ? "…" : "✨ Generate"}
             </button>
           </div>
 

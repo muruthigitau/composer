@@ -311,7 +311,10 @@ export function App() {
     sendMessage({ command: "getRemoteInfo" });
   };
 
-  const generatePrTitleOnly = () => {
+  // Generate BOTH the PR title and description in a single AI request.
+  // This avoids making 2 separate API calls (which can exhaust quotas) and
+  // ensures the AI has full context to write a coherent PR.
+  const generatePrContent = () => {
     if (!treeClean) return;
     setPrGenerating(true);
     setShowLoadingModal(true);
@@ -320,20 +323,6 @@ export function App() {
     sendMessage({
       command: "generatePrContent",
       title: true,
-      plan: { commits: draftCommits, summary: "" },
-      baseBranch: prBase,
-      headBranch: prHead,
-    });
-  };
-
-  const generatePrDescOnly = () => {
-    if (!treeClean) return;
-    setPrGenerating(true);
-    setShowLoadingModal(true);
-    setLoadingVariant("pr");
-    setLoadingActivities([]);
-    sendMessage({
-      command: "generatePrContent",
       description: true,
       plan: { commits: draftCommits, summary: "" },
       baseBranch: prBase,
@@ -590,8 +579,8 @@ export function App() {
         onHeadChange={setPrHead}
         onTitleChange={setPrTitle}
         onDescriptionChange={setPrDescription}
-        onGenerateTitle={generatePrTitleOnly}
-        onGenerateDesc={generatePrDescOnly}
+        onGenerateTitle={generatePrContent}
+        onGenerateDesc={generatePrContent}
         onCreate={createPr}
       />
 
