@@ -2,7 +2,7 @@
   "name": "commit-composer",
   "displayName": "Commit Composer",
   "description": "AI-powered Git commit composer for VS Code. Splits staged changes into logical, reviewable commits.",
-  "version": "0.0.17",
+  "version": "0.0.18",
   "publisher": "muruthigitau",
   "author": {
     "name": "David Gitau",
