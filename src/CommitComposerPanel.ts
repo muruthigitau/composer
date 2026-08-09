@@ -364,10 +364,21 @@ export class CommitComposerPanel {
         }
       );
 
-      this.logActivity(`Created ${committed} commit(s) successfully.`, "success");
-      vscode.window.showInformationMessage(
-        `Created ${committed} commit${committed === 1 ? "" : "s"} successfully!`
-      );
+      if (committed > 0) {
+        this.logActivity(`Created ${committed} commit(s) successfully.`, "success");
+      }
+
+      // Check if any staged changes remain after the plan was applied.
+      const remaining = await this.gitService.getStagedFiles();
+      if (remaining.length > 0) {
+        const msg = `Executed ${committed} commit(s), but ${remaining.length} file(s) still have staged changes not covered by the plan.`;
+        this.logActivity(msg, "warning");
+        vscode.window.showWarningMessage(`Commit Composer: ${msg}`);
+      } else {
+        vscode.window.showInformationMessage(
+          `Created ${committed} commit${committed === 1 ? "" : "s"} successfully!`
+        );
+      }
 
       await this.handleLoadStaged();
     } catch (error) {

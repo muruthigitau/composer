@@ -312,8 +312,10 @@ export class GitService {
    * prevents the first commit from sweeping up *all* staged changes and leaving
    * nothing for the subsequent commits.
    *
-   * Files that have already been committed by a previous step (overlapping
-   * file lists) are filtered out so we never try to commit an unchanged path.
+   * Before each commit, we check which of the target paths still have actual
+   * staged changes. If a path has no staged content left (already committed by
+   * a prior step), it is skipped. If *all* of a commit's paths are already
+   * committed, the commit is skipped with a progress note.
    *
    * @param commits Array of { message, files } to commit sequentially
    * @param onProgress Optional callback for progress reporting
@@ -322,7 +324,6 @@ export class GitService {
     commits: Array<{ message: string; files: string[] }>,
     onProgress?: (current: number, total: number, subject: string) => void
   ): Promise<number> {
-    const committedFiles = new Set<string>();
     let committed = 0;
 
     try {
@@ -330,16 +331,22 @@ export class GitService {
         const commit = commits[i];
         const subject = commit.message.split("\n")[0] || "commit";
 
-        // Only commit paths not already committed by a prior step.
-        const filesToCommit = commit.files.filter(
-          (file) => !committedFiles.has(file)
-        );
+        // Check which of this commit's files still actually have staged
+        // changes. A file already committed by a previous step (or that had
+        // no staged content to begin with) is filtered out.
+        const filesToCommit: string[] = [];
+        for (const file of commit.files) {
+          const stillStaged = await this.hasStagedChangesForPath(file);
+          if (stillStaged) {
+            filesToCommit.push(file);
+          }
+        }
 
         if (filesToCommit.length === 0) {
           onProgress?.(
             i + 1,
             commits.length,
-            `${subject} (skipped — its files were already committed)`
+            `${subject} (skipped — no staged changes left for its files)`
           );
           continue;
         }
@@ -349,7 +356,6 @@ export class GitService {
         // Commit ONLY these paths; everything else stays staged.
         await this.exec(["commit", "-m", commit.message, "--", ...filesToCommit]);
 
-        filesToCommit.forEach((file) => committedFiles.add(file));
         committed++;
       }
     } catch (error) {
@@ -359,6 +365,18 @@ export class GitService {
     }
 
     return committed;
+  }
+
+  /**
+   * Check whether a specific path still has staged changes ready to commit.
+   */
+  public async hasStagedChangesForPath(file: string): Promise<boolean> {
+    try {
+      const out = await this.exec(["diff", "--cached", "--name-only", "--", file]);
+      return out.trim().length > 0;
+    } catch {
+      return false;
+    }
   }
 
   /**
