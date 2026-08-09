@@ -2,7 +2,7 @@
   "name": "commit-composer",
   "displayName": "Commit Composer",
   "description": "AI-powered Git commit composer for VS Code. Splits staged changes into logical, reviewable commits.",
-  "version": "0.0.1",
+  "version": "0.0.16",
   "publisher": "muruthigitau",
   "author": {
     "name": "David Gitau",
@@ -32,13 +32,18 @@
       {
         "command": "commitComposer.focus",
         "title": "Commit Composer: Focus View"
+      },
+      {
+        "command": "commitComposer.generate",
+        "title": "Commit Composer: Generate Commits",
+        "icon": "$(sparkle)"
       }
     ],
     "keybindings": [
       {
         "command": "commitComposer.focus",
         "key": "ctrl+alt+c",
-        "mac": "cmd+alt+c"
+        "mac": "cmd+option+c"
       }
     ],
     "viewsContainers": {
@@ -90,27 +95,232 @@
         "commitComposer.provider": {
           "type": "string",
           "enum": [
-            "ollama",
+            "gitkraken",
+            "copilot",
+            "anthropic",
+            "google",
             "openai",
-            "custom"
+            "azure",
+            "mistral",
+            "openai-compatible",
+            "ollama",
+            "openrouter",
+            "huggingface",
+            "deepseek",
+            "xai"
           ],
           "default": "ollama",
           "description": "The AI provider used to generate commit plans."
         },
-        "commitComposer.model": {
+        "commitComposer.openaiModel": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "description": "The OpenAI model to use."
+        },
+        "commitComposer.openaiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API key. Leave empty to use the OPENAI_API_KEY environment variable."
+        },
+        "commitComposer.openaiBaseUrl": {
+          "type": "string",
+          "default": "https://api.openai.com/v1",
+          "description": "OpenAI API base URL."
+        },
+        "commitComposer.googleModel": {
+          "type": "string",
+          "default": "gemini-3.1-flash-lite",
+          "description": "The Google Gemini model to use."
+        },
+        "commitComposer.googleApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Google Gemini API key. Leave empty to use the GEMINI_API_KEY or GOOGLE_API_KEY environment variable."
+        },
+        "commitComposer.googleBaseUrl": {
+          "type": "string",
+          "default": "https://generativelanguage.googleapis.com/v1beta",
+          "description": "Google Gemini API base URL."
+        },
+        "commitComposer.anthropicModel": {
+          "type": "string",
+          "default": "claude-3-5-sonnet-latest",
+          "description": "The Anthropic Claude model to use."
+        },
+        "commitComposer.anthropicApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Anthropic Claude API key. Leave empty to use the ANTHROPIC_API_KEY environment variable."
+        },
+        "commitComposer.anthropicBaseUrl": {
+          "type": "string",
+          "default": "https://api.anthropic.com/v1",
+          "description": "Anthropic Claude API base URL."
+        },
+        "commitComposer.xaiModel": {
+          "type": "string",
+          "default": "grok-3",
+          "description": "The xAI (Grok) model to use."
+        },
+        "commitComposer.xaiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "xAI API key. Leave empty to use the XAI_API_KEY or GROK_API_KEY environment variable."
+        },
+        "commitComposer.xaiBaseUrl": {
+          "type": "string",
+          "default": "https://api.x.ai/v1",
+          "description": "xAI API base URL."
+        },
+        "commitComposer.mistralModel": {
+          "type": "string",
+          "default": "mistral-small-latest",
+          "description": "The Mistral model to use."
+        },
+        "commitComposer.mistralApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Mistral API key. Leave empty to use the MISTRAL_API_KEY environment variable."
+        },
+        "commitComposer.mistralBaseUrl": {
+          "type": "string",
+          "default": "https://api.mistral.ai/v1",
+          "description": "Mistral API base URL."
+        },
+        "commitComposer.openrouterModel": {
+          "type": "string",
+          "default": "google/gemini-3-flash",
+          "description": "The OpenRouter model to use."
+        },
+        "commitComposer.openrouterApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenRouter API key. Leave empty to use the OPENROUTER_API_KEY environment variable."
+        },
+        "commitComposer.openrouterBaseUrl": {
+          "type": "string",
+          "default": "https://openrouter.ai/api/v1",
+          "description": "OpenRouter API base URL."
+        },
+        "commitComposer.huggingfaceModel": {
+          "type": "string",
+          "default": "microsoft/phi-3-mini",
+          "description": "The Hugging Face model to use."
+        },
+        "commitComposer.huggingfaceApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Hugging Face API key. Leave empty to use the HUGGINGFACE_API_KEY environment variable."
+        },
+        "commitComposer.huggingfaceBaseUrl": {
+          "type": "string",
+          "default": "https://api-inference.huggingface.co/v1",
+          "description": "Hugging Face API base URL."
+        },
+        "commitComposer.azureModel": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "description": "The Azure OpenAI model to use."
+        },
+        "commitComposer.azureApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Azure OpenAI API key. Leave empty to use the OPENAI_API_KEY environment variable."
+        },
+        "commitComposer.azureBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Azure OpenAI API base URL (e.g. https://your-resource.openai.azure.com)."
+        },
+        "commitComposer.deepseekModel": {
+          "type": "string",
+          "default": "deepseek-chat",
+          "description": "The DeepSeek model to use."
+        },
+        "commitComposer.deepseekApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "DeepSeek API key. Leave empty to use the DEEPSEEK_API_KEY environment variable."
+        },
+        "commitComposer.deepseekBaseUrl": {
+          "type": "string",
+          "default": "https://api.deepseek.com/v1",
+          "description": "DeepSeek API base URL."
+        },
+        "commitComposer.ollamaModel": {
           "type": "string",
           "default": "qwen2.5-coder",
-          "description": "The model name used by the AI provider."
+          "description": "The Ollama model to use."
         },
-        "commitComposer.baseUrl": {
+        "commitComposer.ollamaBaseUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Ollama base URL."
+        },
+        "commitComposer.openaiCompatibleModel": {
           "type": "string",
           "default": "",
-          "description": "Optional OpenAI-compatible base URL (e.g. for Ollama: http://localhost:11434/v1). Leave empty to use provider defaults."
+          "description": "The model name for the OpenAI-compatible endpoint (lowercase key: openai-compatible)."
         },
-        "commitComposer.apiKey": {
+        "commitComposer.openaiCompatibleBaseUrl": {
           "type": "string",
           "default": "",
-          "description": "API key for the AI provider. Overrides the OPENAI_API_KEY environment variable."
+          "description": "Base URL for an OpenAI-compatible endpoint."
+        },
+        "commitComposer.openaiCompatibleApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for the OpenAI-compatible endpoint (if required)."
+        },
+        "commitComposer.openaiCompatibleModelAlt": {
+          "type": "string",
+          "default": "",
+          "description": "Alternative model key for the OpenAI-compatible endpoint."
+        },
+        "commitComposer.openaiCompatibleBaseUrlAlt": {
+          "type": "string",
+          "default": "",
+          "description": "Alternative base URL for the OpenAI-compatible endpoint."
+        },
+        "commitComposer.openaiCompatibleApiKeyAlt": {
+          "type": "string",
+          "default": "",
+          "description": "Alternative API key for the OpenAI-compatible endpoint."
+        },
+        "commitComposer.gitkrakenModel": {
+          "type": "string",
+          "default": "GitKraken AI",
+          "description": "The GitKraken AI model to use."
+        },
+        "commitComposer.gitkrakenBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "GitKraken AI base URL (advanced)."
+        },
+        "commitComposer.gitkrakenApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "GitKraken AI API key (optional)."
+        },
+        "commitComposer.copilotModel": {
+          "type": "string",
+          "default": "Copilot",
+          "description": "The GitHub Copilot model to use."
+        },
+        "commitComposer.copilotBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub Copilot base URL (advanced)."
+        },
+        "commitComposer.copilotApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub Copilot API key (optional)."
+        },
+        "commitComposer.saveApiKeys": {
+          "type": "boolean",
+          "default": true,
+          "description": "Save API keys to VS Code settings (global). Disable to only use environment variables."
         },
         "commitComposer.maxCommits": {
           "type": "number",
@@ -128,7 +338,8 @@
     "watch": "npm run watch-webview & npm run watch-extension",
     "watch-webview": "cd webview && npm run watch",
     "watch-extension": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --watch",
-    "package": "vsce package"
+    "package": "vsce package",
+    "update-local": "vsce package --no-dependencies && code --install-extension *.vsix --force"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
