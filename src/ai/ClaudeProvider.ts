@@ -2,6 +2,7 @@ import { AIProvider, PrContent, RepositoryContext } from "./AIProvider";
 import { SYSTEM_PROMPT, buildPrPrompt, buildUserPrompt } from "./prompts";
 import { CommitPlan } from "../types/messages";
 import { BaseAIProvider } from "./BaseAIProvider";
+import { fetchWithRetry } from "./rateLimit";
 
 /**
  * ClaudeProvider uses Anthropic's Messages API.
@@ -23,7 +24,7 @@ export class ClaudeProvider extends BaseAIProvider implements AIProvider {
   async generateCommitPlan(context: RepositoryContext): Promise<CommitPlan> {
     const url = `${this.baseUrl}/messages`;
 
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -78,7 +79,7 @@ export class ClaudeProvider extends BaseAIProvider implements AIProvider {
     context?: { branch?: string; baseBranch?: string; repoName?: string }
   ): Promise<PrContent> {
     const url = `${this.baseUrl}/messages`;
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
