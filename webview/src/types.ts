@@ -17,6 +17,8 @@ export interface Change {
 export interface CommitGroup {
   id: string;
   type: string;
+  scope?: string;
+  breaking?: boolean;
   subject: string;
   body: string[];
   changes: Change[];
@@ -48,9 +50,13 @@ export interface FileDiff {
 export interface DraftCommit {
   id: string;
   type: string;
+  scope?: string;
+  breaking?: boolean;
   subject: string;
   overview: string;
   files: FileDiff[];
+  /** Exact hunks per file that this commit will contain. */
+  changes: Change[];
   /** A single prose paragraph explaining what changed & why (display only, NOT part of the commit). */
   aiOverview?: string;
 }
@@ -304,7 +310,7 @@ export interface ActivityItem {
 export type ExtensionToWebviewMessage =
   | { command: "setStagedOverview"; files: FileDiff[] }
   | { command: "setLoading"; value: boolean }
-  | { command: "planGenerated"; plan: DraftCommitPlan }
+  | { command: "planGenerated"; plan: DraftCommitPlan; warnings?: string[] }
   | { command: "singleRegenerated"; commit: DraftCommit }
   | { command: "changesDetected"; staged: number; unstaged: number }
   | {
