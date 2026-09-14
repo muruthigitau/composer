@@ -5,6 +5,7 @@ import {
   ProviderConfig,
   ProviderType,
 } from "../types";
+import { formatTypeSubject } from "../lib/commitMessage";
 import { ActivityLog } from "./ActivityLog";
 import { QuickPickForm } from "./QuickPickForm";
 
@@ -21,6 +22,7 @@ interface LeftPanelProps {
   copiedItemId: string | null;
   stagedFiles: FileDiff[];
   draftCommits: DraftCommit[];
+  planWarnings: string[];
   selectedCommitId: string | null;
   qpOpen: boolean;
   qpProvider: ProviderConfig["provider"];
@@ -62,6 +64,7 @@ export function LeftPanel({
   copiedItemId,
   stagedFiles,
   draftCommits,
+  planWarnings,
   selectedCommitId,
   qpOpen,
   qpProvider,
@@ -211,6 +214,15 @@ export function LeftPanel({
               Draft Commits
             </div>
 
+            {planWarnings.length > 0 && (
+              <div className="plan-warnings p-2.5 rounded-md bg-warning-bg border border-warning-border text-warning-text text-[12px] leading-relaxed">
+                <strong className="block mb-1">Plan adjusted</strong>
+                {planWarnings.map((warning) => (
+                  <div key={warning}>• {warning}</div>
+                ))}
+              </div>
+            )}
+
             <div className="commits-timeline flex flex-col gap-0.5 relative">
               <div
                 className={`timeline-node relative flex items-center gap-2.5 p-2.5 rounded-md cursor-pointer border border-transparent transition-colors duration-150 ${
@@ -257,11 +269,17 @@ export function LeftPanel({
                   </div>
                   <div className="node-details min-w-0 flex-1">
                     <div className="node-title text-[13px] font-semibold overflow-hidden text-ellipsis whitespace-nowrap text-text-primary">
-                      {commit.type}: {commit.subject}
+                      {formatTypeSubject(commit.type, commit.subject, commit.scope)}
                     </div>
                     <div className="node-meta text-[11px] text-text-muted mt-0.5">
                       {commit.files.length} file
                       {commit.files.length === 1 ? "" : "s"}
+                      <span className="hunks ml-1">
+                        · {(commit.changes || []).reduce((a, c) => a + c.hunks.length, 0)} hunk
+                        {(commit.changes || []).reduce((a, c) => a + c.hunks.length, 0) === 1
+                          ? ""
+                          : "s"}
+                      </span>
                       <span className="additions text-diff-addText ml-1">
                         +{commit.files.reduce((a, f) => a + f.additions, 0)}
                       </span>

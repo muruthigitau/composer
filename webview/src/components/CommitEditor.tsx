@@ -1,4 +1,5 @@
 import { DraftCommit } from "../types";
+import { formatTypeSubject, parseTypeSubject } from "../lib/commitMessage";
 
 interface CommitEditorProps {
   commit: DraftCommit;
@@ -23,13 +24,13 @@ export function CommitEditor({
         <div className="commit-message-box flex-1 flex flex-col gap-2.5 min-w-0">
           <input
             type="text"
-            value={`${commit.type}: ${commit.subject}`}
+            value={formatTypeSubject(commit.type, commit.subject, commit.scope)}
             onChange={(e) => {
-              const value = e.target.value;
-              const [type, ...rest] = value.split(":");
+              const parsed = parseTypeSubject(e.target.value);
               onCommitChange(commit.id, {
-                type: (type || "").trim(),
-                subject: rest.join(":").trim(),
+                type: parsed.type,
+                scope: parsed.scope,
+                subject: parsed.subject,
               });
             }}
             className="commit-title-input bg-bg-input border border-input-border text-text-primary rounded-md px-3 py-2.5 text-sm font-medium outline-none w-full transition-colors duration-150 focus:border-input-focus-border placeholder:text-text-disabled"
