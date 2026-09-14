@@ -42,7 +42,11 @@ export interface CommitGroup {
   id: string;
   /** Conventional commit type: feat, fix, refactor, docs, style, test, chore, perf, ci, build, revert. */
   type: string;
-  /** Short commit subject line. */
+  /** Optional conventional-commit scope, e.g. "api". */
+  scope?: string;
+  /** Whether the commit is an intentional breaking change. */
+  breaking?: boolean;
+  /** Short commit subject line (never contains the type prefix). */
   subject: string;
   /** Bullet-point lines for the commit body. */
   body: string[];
@@ -97,9 +101,15 @@ export interface FileDiff {
 export interface DraftCommit {
   id: string;
   type: string;
+  /** Optional conventional-commit scope, e.g. "api". */
+  scope?: string;
+  /** Whether the commit is an intentional breaking change. */
+  breaking?: boolean;
   subject: string;
   overview: string;
   files: FileDiff[];
+  /** Exact hunks per file that this commit will contain. */
+  changes: Change[];
   /** A single prose paragraph explaining what changed & why (display only, NOT part of the commit). */
   aiOverview?: string;
 }
@@ -173,7 +183,7 @@ export interface ActivityItem {
 export type ExtensionToWebviewMessage =
   | { command: "setStagedOverview"; files: FileDiff[] }
   | { command: "setLoading"; value: boolean }
-  | { command: "planGenerated"; plan: DraftCommitPlan }
+  | { command: "planGenerated"; plan: DraftCommitPlan; warnings?: string[] }
   | { command: "singleRegenerated"; commit: DraftCommit }
   | { command: "changesDetected"; staged: number; unstaged: number }
   | { command: "gitSnapshot"; snapshot: GitStatusSnapshot }
