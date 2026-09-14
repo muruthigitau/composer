@@ -3,20 +3,20 @@ import { OpenAIProvider } from "./OpenAIProvider";
 import { OllamaProvider } from "./OllamaProvider";
 import { GeminiProvider } from "./GeminiProvider";
 import { ClaudeProvider } from "./ClaudeProvider";
-import { DeepSeekProvider } from "./DeepSeekProvider";
 import { ProviderConfig } from "../types/provider";
 
 /**
- * Factory that creates AI providers based on configuration.
+ * Factory that creates AI providers from a stored configuration.
  *
- * Mapping guide (most use the OpenAI-compatible chat completions protocol):
- *   - openai, azure, openai-compatible, mistral, openrouter,
- *     huggingface, xai, gitkraken, copilot -> OpenAIProvider
- *   - google                                  -> GeminiProvider
- *   - anthropic                               -> ClaudeProvider
- *   - deepseek                               -> DeepSeekProvider
- *   - ollama                                 -> OllamaProvider
+ * Mapping guide (all but Gemini/Claude/Ollama speak the OpenAI
+ * chat-completions protocol):
+ *   - openai, azure, openai-compatible, mistral, openrouter, huggingface,
+ *     xai, deepseek, gitkraken, copilot -> OpenAIProvider
+ *   - google                                -> GeminiProvider
+ *   - anthropic                             -> ClaudeProvider
+ *   - ollama                                -> OllamaProvider
  */
+
 export class ProviderFactory {
   /**
    * Create an AI provider from a ProviderConfig.
@@ -25,42 +25,42 @@ export class ProviderFactory {
   public static create(config: ProviderConfig): AIProvider {
     const baseUrl = config.baseUrl || undefined;
     const apiKey = config.apiKey;
+    const label = config.label || config.provider;
 
     switch (config.provider) {
       case "openai":
       case "azure":
-      case "openai-compatible":
       case "mistral":
       case "openrouter":
       case "huggingface":
       case "xai":
+      case "deepseek":
       case "gitkraken":
       case "copilot":
+      case "openai-compatible": {
         if (config.provider === "openai-compatible" && !baseUrl) {
           throw new Error("Base URL is required for the OpenAI-compatible provider.");
         }
-        // GitKraken/Copilot use an OpenAI-compatible endpoint; key optional.
-        this.assertApiKey(
-          config.label || "Provider",
-          apiKey,
-          config.provider === "gitkraken" || config.provider === "copilot" || config.provider === "openai-compatible"
-        );
-        return new OpenAIProvider(config.model, apiKey, baseUrl, 6);
+        const keyOptional =
+          config.provider === "gitkraken" ||
+          config.provider === "copilot" ||
+          config.provider === "openai-compatible";
+        this.assertApiKey(label, apiKey, keyOptional);
+        return new OpenAIProvider(config.model, apiKey, baseUrl, label);
+      }
       case "google":
-        this.assertApiKey("Google Gemini", apiKey);
-        return new GeminiProvider(config.model, apiKey, baseUrl, 6);
+        this.assertApiKey(label, apiKey);
+        return new GeminiProvider(config.model, apiKey, baseUrl, label);
       case "anthropic":
-        this.assertApiKey("Anthropic", apiKey);
-        return new ClaudeProvider(config.model, apiKey, baseUrl, 6);
-      case "deepseek":
-        this.assertApiKey("DeepSeek", apiKey);
-        return new DeepSeekProvider(config.model, apiKey, baseUrl, 6);
+        this.assertApiKey(label, apiKey);
+        return new ClaudeProvider(config.model, apiKey, baseUrl, label);
       case "ollama":
-        return new OllamaProvider(config.model, baseUrl || "http://localhost:11434", 6);
+        return new OllamaProvider(config.model, baseUrl || "http://localhost:11434", label);
       default:
         throw new Error(`Unknown provider: ${config.provider}`);
     }
   }
+
 
   /**
    * Test a provider connection by making a lightweight request.
