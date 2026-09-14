@@ -1,6 +1,6 @@
 import * as path from "path";
 import * as vscode from "vscode";
-import { AIProvider } from "../ai/AIProvider";
+import { AIProvider, CommitMessageContext, CommitMessageDraft, PrCommit } from "../ai/AIProvider";
 import { ProviderFactory } from "../ai/ProviderFactory";
 import { CommitPlan } from "../types/messages";
 import { DEFAULT_PROVIDERS, ProviderConfig, ProviderType } from "../types/provider";
@@ -221,15 +221,11 @@ export class AIService {
       sampleMessage?: string;
     }
   ): Promise<CommitPlan> {
-    const vsConfig = vscode.workspace.getConfiguration("commitComposer");
-    const maxCommits = vsConfig.get<number>("maxCommits", 6);
-
     // Always recreate to pick up the latest persisted config (the file).
     this.refreshProvider();
 
     return await this.provider.generateCommitPlan({
       diff,
-      maxCommits,
       branch: context?.branch,
       repoName: context?.repoName,
       instructions: context?.instructions,
@@ -238,11 +234,19 @@ export class AIService {
   }
 
   /**
+   * Generate a commit message for a single commit's hunks.
+   */
+  public async generateCommitMessage(context: CommitMessageContext): Promise<CommitMessageDraft> {
+    this.refreshProvider();
+    return await this.provider.generateCommitMessage(context);
+  }
+
+  /**
    * Generate a Pull Request title + Markdown description for the diff.
    */
   public async generatePrContent(
     diff: string,
-    commits: Array<{ subject: string; overview: string }>,
+    commits: PrCommit[],
     context?: {
       branch?: string;
       baseBranch?: string;

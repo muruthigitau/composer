@@ -1,402 +1,135 @@
-import { execFile } from "child_process";
-import * as fs from "fs";
-import * as path from "path";
-import { DiffHunk, FileDiff, StagedChangeSummary } from "../types/messages";
-
 /**
- * GitService wraps the Git CLI to provide Git operations needed by the composer.
- * It uses the standard `git` command available on the user's system.
+ * Git CLI wrapper for the Commit Composer.
+ *
+ * Responsibilities:
+ *  - read the staged diff and parse it into files/hunks (`DiffParser`),
+ *  - report status, branches and remotes,
+ *  - create commits that contain **only the selected hunks** of a plan.
+ *
+ * Hunk-precise commits are implemented with a temporary index
+ * (`GIT_INDEX_FILE`): each commit's patch is applied to that index and
+ * committed from it. The user's real index is never modified, so any change a
+ * commit did not consume stays staged afterwards.
  */
+
+import { execFile } from "child_process";
+import { createHash } from "crypto";
+import * as path from "path";
+import { FileDiff } from "../types/messages";
+import { ParsedFileDiff, parseUnifiedDiff, toFileDiffs } from "./DiffParser";
+import {
+  CommitExecutionResult,
+  HunkCommitRunner,
+  PlannedCommit
+} from "./HunkCommitRunner";
+/** A commit read from `git log`. */
+export interface GitCommit {
+  subject: string;
+  body: string;
+}
+
 export class GitService {
   constructor(private workspacePath: string) {}
 
-  /**
-   * Execute a git command and return stdout.
-   * Public so other classes can use it (e.g. CommitComposerPanel).
-   */
+  /** Execute a git command and return stdout. */
   public exec(args: string[]): Promise<string> {
     return this.runCommand("git", args);
   }
 
   /**
-   * Execute an arbitrary CLI command binary within the workspace, returning stdout.
-   * Used for GitHub CLI (`gh`) etc.
+   * Execute an arbitrary CLI binary within the workspace and return stdout.
+   * Also used for the GitHub CLI (`gh`).
    */
-  public runCommand(bin: string, args: string[]): Promise<string> {
+  public runCommand(
+    bin: string,
+    args: string[],
+    options?: { env?: NodeJS.ProcessEnv; cwd?: string }
+  ): Promise<string> {
     return new Promise((resolve, reject) => {
-      execFile(bin, args, { cwd: this.workspacePath, maxBuffer: 1024 * 1024 * 100 }, (error, stdout) => {
-        if (error) {
-          reject(new Error(error.message || String(error)));
-          return;
+      execFile(
+        bin,
+        args,
+        {
+          cwd: options?.cwd || this.workspacePath,
+          env: options?.env ? { ...process.env, ...options.env } : process.env,
+          maxBuffer: 1024 * 1024 * 200
+        },
+        (error, stdout, stderr) => {
+          if (error) {
+            const detail = String(stderr || "").trim() || error.message || String(error);
+            reject(new Error(detail));
+            return;
+          }
+          resolve(stdout);
         }
-        resolve(stdout);
-      });
+      );
     });
   }
 
+  // ─────────────────────────── staged diff ───────────────────────────
+
   /**
-   * Get the root of the current git repository.
+   * Raw staged diff including binary patches. Used both for parsing and for a
+   * content signature that detects real staged changes.
    */
-  public async getRepoRoot(): Promise<string> {
-    const root = await this.exec(["rev-parse", "--show-toplevel"]);
-    return root.trim();
+  public async getStagedDiffRaw(): Promise<string> {
+    return await this.exec(["diff", "--cached", "--no-color", "--binary"]);
   }
 
   /**
-   * Get the full staged diff (git diff --cached).
+   * Parse the staged diff into files and hunks.
+   *
+   * @returns One entry per staged file (empty when nothing is staged).
    */
-  public async getStagedDiff(): Promise<string> {
-    return await this.exec(["diff", "--cached", "--no-color"]);
+  public async getParsedStagedDiff(): Promise<ParsedFileDiff[]> {
+    return parseUnifiedDiff(await this.getStagedDiffRaw());
   }
 
-  /**
-   * Get the full staged diff for a specific file.
-   */
-  public async getStagedFileDiff(filePath: string): Promise<string> {
-    return await this.exec(["diff", "--cached", "--no-color", "--", filePath]);
+  /** Per-file staged diffs shaped for the webview. */
+  public async getStagedFileDiffs(): Promise<FileDiff[]> {
+    return toFileDiffs(await this.getParsedStagedDiff()) as FileDiff[];
   }
 
-  /**
-   * Get staged files with their diff statistics.
-   */
+  /** Staged file paths. */
   public async getStagedFiles(): Promise<string[]> {
     const output = await this.exec(["diff", "--cached", "--name-only"]);
     return output.split("\n").filter((line) => line.trim().length > 0);
   }
 
-  /**
-   * Get detailed staged change summary.
-   */
-  public async getStagedSummary(): Promise<StagedChangeSummary | null> {
-    const diff = await this.getStagedDiff();
-    if (!diff.trim()) {
-      return null;
-    }
-
-    const files = await this.getStagedFiles();
-
-    // Parse the diff to count additions/deletions
-    let additions = 0;
-    let deletions = 0;
-
-    const lines = diff.split("\n");
-    for (const line of lines) {
-      if (line.startsWith("+") && !line.startsWith("+++")) {
-        additions++;
-      } else if (line.startsWith("-") && !line.startsWith("---")) {
-        deletions++;
-      }
-    }
-
-    return {
-      fileCount: files.length,
-      additions,
-      deletions,
-      files
-    };
-  }
-
-  /**
-   * Get per-file staged diffs, suitable for the master-detail UI.
-   */
-  public async getStagedFileDiffs(): Promise<FileDiff[]> {
-    const rawDiff = await this.getStagedDiff();
-    if (!rawDiff.trim()) {
-      return [];
-    }
-
-    const fileBlocks = rawDiff.split(/^diff --git /m).filter((b) => b.trim().length > 0);
-    const result: FileDiff[] = [];
-
-    for (const block of fileBlocks) {
-      const lines = block.split("\n");
-      const header = lines[0] || "";
-      const pathMatch = header.match(/b\/(.+?)$/);
-      const path = pathMatch ? pathMatch[1] : "unknown";
-
-      let status: "ADDED" | "MODIFIED" | "DELETED" = "MODIFIED";
-      if (lines.some((l) => l.startsWith("new file"))) status = "ADDED";
-      else if (lines.some((l) => l.startsWith("deleted file"))) status = "DELETED";
-
-      let additions = 0;
-      let deletions = 0;
-      for (const line of lines) {
-        if (line.startsWith("+") && !line.startsWith("+++")) additions++;
-        else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
-      }
-
-      result.push({
-        path,
-        status,
-        additions,
-        deletions,
-        diffText: "diff --git " + block.trim()
-      });
-    }
-
-    return result;
-  }
-
-  /**
-   * Check if the working tree is completely clean: 0 staged and 0 unstaged
-   * changes (including untracked files).
-   */
+  /** True when there are no staged and no unstaged changes. */
   public async isWorkingTreeClean(): Promise<boolean> {
     const { staged, unstaged } = await this.getStatusCounts();
     return staged === 0 && unstaged === 0;
   }
 
   /**
-   * Get the diff between two branches compared at their merge-base.
+   * Snapshot used by the webview to detect working-directory changes.
    *
-   * Uses `git diff base...head` (three-dot), which computes the diff from the
-   * merge-base of `base` and `head` to the tip of `head`. This represents
-   * exactly the commits that `head` introduced above `base` — i.e. what a
-   * normal Pull Request would contain. It is entirely independent of any
-   * staged or unstaged working-tree changes.
+   * The signature hashes the staged file list plus the full staged diff, so
+   * real content changes are detected — not just changed counts.
    */
-  public async getBranchDiff(baseBranch: string, headBranch: string): Promise<string> {
-    return await this.exec([
-      "diff",
-      `${baseBranch}...${headBranch}`,
-      "--no-color"
-    ]);
+  public async getGitSnapshot(): Promise<{
+    staged: number;
+    unstaged: number;
+    filesSignature: string;
+    files: ParsedFileDiff[];
+  }> {
+    const [counts, rawDiff] = await Promise.all([this.getStatusCounts(), this.getStagedDiffRaw()]);
+    const files = parseUnifiedDiff(rawDiff);
+    const signature = createHash("sha1")
+      .update(files.map((file) => file.path).join("\n"))
+      .update(rawDiff)
+      .digest("hex");
+
+    return {
+      staged: counts.staged,
+      unstaged: counts.unstaged,
+      filesSignature: signature,
+      files
+    };
   }
 
-  /**
-   * Parse a unified diff into per-file, per-hunk structures.
-   * This enables precise commit grouping at hunk granularity.
-   */
-  public parseDiffIntoHunks(diff: string): Map<string, DiffHunk[]> {
-    const hunksByFile = new Map<string, DiffHunk[]>();
-    let currentFile: string | null = null;
-    let currentHunkIndex = 0;
-
-    const lines = diff.split("\n");
-
-    for (const line of lines) {
-      // New file section in the diff
-      const fileMatch = line.match(/^diff --git a\/(.+?) b\/(.+?)$/);
-      if (fileMatch) {
-        currentFile = fileMatch[1];
-        currentHunkIndex = 0;
-        hunksByFile.set(currentFile, []);
-        continue;
-      }
-
-      // Hunk header
-      const hunkMatch = line.match(/^@@ -(\d+),?(\d*) \+(\d+),?(\d*) @@/);
-      if (hunkMatch && currentFile) {
-        const files = hunksByFile.get(currentFile);
-        if (files) {
-          files.push({
-            hunkIndex: currentHunkIndex,
-            header: line,
-            content: line,
-            file: currentFile
-          });
-          currentHunkIndex++;
-        }
-        continue;
-      }
-
-      // Append content to the current hunk
-      if (currentFile) {
-        const files = hunksByFile.get(currentFile);
-        if (files && files.length > 0) {
-          const lastHunk = files[files.length - 1];
-          lastHunk.content += "\n" + line;
-        }
-      }
-    }
-
-    return hunksByFile;
-  }
-
-  /**
-   * Create a commit with the given message and files.
-   */
-  public async createCommit(message: string, files: string[]): Promise<string> {
-    // Stage the specific files (path-safe)
-    const args = ["add", "--", ...files];
-    await this.exec(args);
-    // Create the commit
-    const commitOutput = await this.exec(["commit", "-m", message]);
-    return commitOutput;
-  }
-
-  /**
-   * Create a commit from a set of hunks in files.
-   * This uses git apply with a constructed patch to commit only specific hunks.
-   *
-   * @param message Full commit message (subject + body)
-   * @param hunksByFile Map of file path to list of hunks to include
-   */
-  public async createHunkCommit(message: string, hunksByFile: Map<string, DiffHunk[]>): Promise<string> {
-    // 1. Save the original staged state
-    const originalPatch = await this.exec(["diff", "--cached"]);
-
-    // 2. Unstage everything
-    await this.exec(["reset", "--cached", "."]);
-
-    // 3. Stage the files that have hunks in this commit
-    const files = Array.from(hunksByFile.keys());
-    await this.exec(["add", "--", ...files]);
-
-    // 4. Construct and apply a reverse patch to remove non-included hunks from staging
-    // Get the current staged diff of the files
-    for (const [file, hunks] of hunksByFile) {
-      const fileChanges = await this.exec(["diff", "--cached", "--no-color", "--", file]);
-      const allHunks = this.parseDiffIntoHunks(fileChanges).get(file) || [];
-
-      // Determine which hunks to exclude
-      const includedIndices = new Set(hunks.map((h) => h.hunkIndex));
-      const excludedHunks = allHunks
-        .filter((h) => !includedIndices.has(h.hunkIndex))
-        .map((h) => h.content);
-
-      if (excludedHunks.length > 0) {
-        // Apply reverse patch to unstage excluded hunks
-        const patch = this.constructPatchFromHunks(file, excludedHunks);
-        try {
-          await this.exec(["apply", "--cached", "--reverse", "-"],
-            // Note: execFile doesn't support stdin easily; we'll use a temp approach
-          );
-        } catch {
-          // Fall back to simpler approach
-        }
-      }
-    }
-
-    // 5. Create the commit with the staged (included) hunks
-    const commitOutput = await this.exec(["commit", "-m", message]);
-
-    // 6. Restore the original staged state for remaining changes
-    if (originalPatch.trim()) {
-      try {
-        await this.exec(["apply", "--cached", "--reverse"]);
-        // Re-apply the original patch minus committed files
-        const remainingFiles = files.filter(() => true);
-        await this.exec(["restore", "--staged", "--", ...remainingFiles]);
-      } catch {
-        // Best effort restore
-      }
-    }
-
-    return commitOutput;
-  }
-
-  /**
-   * Construct a patch for given hunks of a file.
-   */
-  private constructPatchFromHunks(file: string, hunks: string[]): string {
-    // Get the file header info from the diff
-    const lines = ["diff --git a/" + file + " b/" + file, "--- a/" + file, "+++ b/" + file, ...hunks];
-    return lines.join("\n");
-  }
-
-  /**
-   * Check if there are staged changes.
-   */
-  public async hasStagedChanges(): Promise<boolean> {
-    const output = await this.exec(["diff", "--cached", "--name-only"]);
-    return output.trim().length > 0;
-  }
-
-  /**
-   * Apply a commit plan sequentially, committing only the files specified for
-   * each commit.
-   *
-   * `git commit -- <paths>` creates a commit containing ONLY the given paths
-   * by using a temporary index internally. This is the critical fix: it
-   * prevents the first commit from sweeping up *all* staged changes and leaving
-   * nothing for the subsequent commits.
-   *
-   * Before each commit, we check which of the target paths still have actual
-   * staged changes. If a path has no staged content left (already committed by
-   * a prior step), it is skipped. If *all* of a commit's paths are already
-   * committed, the commit is skipped with a progress note.
-   *
-   * @param commits Array of { message, files } to commit sequentially
-   * @param onProgress Optional callback for progress reporting
-   */
-  public async commitPlan(
-    commits: Array<{ message: string; files: string[] }>,
-    onProgress?: (current: number, total: number, subject: string) => void
-  ): Promise<number> {
-    let committed = 0;
-
-    try {
-      for (let i = 0; i < commits.length; i++) {
-        const commit = commits[i];
-        const subject = commit.message.split("\n")[0] || "commit";
-
-        // Check which of this commit's files still actually have staged
-        // changes. A file already committed by a previous step (or that had
-        // no staged content to begin with) is filtered out.
-        const filesToCommit: string[] = [];
-        for (const file of commit.files) {
-          const stillStaged = await this.hasStagedChangesForPath(file);
-          if (stillStaged) {
-            filesToCommit.push(file);
-          }
-        }
-
-        if (filesToCommit.length === 0) {
-          onProgress?.(
-            i + 1,
-            commits.length,
-            `${subject} (skipped — no staged changes left for its files)`
-          );
-          continue;
-        }
-
-        onProgress?.(i + 1, commits.length, subject);
-
-        // Commit ONLY these paths; everything else stays staged.
-        await this.exec(["commit", "-m", commit.message, "--", ...filesToCommit]);
-
-        committed++;
-      }
-    } catch (error) {
-      // If a commit fails, surface how far we got so the user can recover.
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      throw new Error(`Commit failed after ${committed} succeeded: ${errorMsg}`);
-    }
-
-    return committed;
-  }
-
-  /**
-   * Check whether a specific path still has staged changes ready to commit.
-   */
-  public async hasStagedChangesForPath(file: string): Promise<boolean> {
-    try {
-      const out = await this.exec(["diff", "--cached", "--name-only", "--", file]);
-      return out.trim().length > 0;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Restore the original staged state after partial/complete commit operations.
-   */
-  public async restoreOriginalStaging(patch: string): Promise<void> {
-    if (!patch.trim()) {
-      return;
-    }
-    // Reset index and re-apply the original patch
-    await this.exec(["reset", "--cached", "."]);
-    const tempFile = path.join(this.workspacePath, ".git", ".commit-composer-original.patch");
-    fs.writeFileSync(tempFile, patch);
-    await this.exec(["apply", "--cached", tempFile]);
-    fs.unlinkSync(tempFile);
-  }
-
-  /**
-   * Get the count of staged and unstaged files via `git status --porcelain`.
-   */
+  /** Counts of staged/unstaged files from `git status --porcelain`. */
   public async getStatusCounts(): Promise<{ staged: number; unstaged: number }> {
     const output = await this.exec(["status", "--porcelain"]);
     if (!output.trim()) {
@@ -407,89 +140,92 @@ export class GitService {
     let unstaged = 0;
 
     for (const line of output.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      // First column = index status, second = worktree status
-      const indexStatus = trimmed[0];
-      const worktreeStatus = trimmed[1] || " ";
+      if (!line.trim()) continue;
+      const indexStatus = line[0];
+      const worktreeStatus = line[1] || " ";
 
-      // Indexed (staged) changes: anything but ' ' and '?'
-      if (indexStatus !== " " && indexStatus !== "?") {
-        staged++;
-      }
-      // Worktree (unstaged) changes: anything but ' ' and '?'
-      if (worktreeStatus !== " " && worktreeStatus !== "?") {
-        unstaged++;
-      }
-      // Untracked files show as '??'
-      if (indexStatus === "?" && worktreeStatus === "?") {
-        unstaged++;
-      }
+      if (indexStatus !== " " && indexStatus !== "?") staged++;
+      if (worktreeStatus !== " " && worktreeStatus !== "?") unstaged++;
+      if (indexStatus === "?" && worktreeStatus === "?") unstaged++;
     }
 
     return { staged, unstaged };
   }
 
+  // ─────────────────────────── branches / commits ───────────────────────────
+
+  /** Root of the current git repository. */
+  public async getRepoRoot(): Promise<string> {
+    const root = await this.exec(["rev-parse", "--show-toplevel"]);
+    return root.trim();
+  }
+
+  /** Git directory path, used by the hunk commit runner for its temp index. */
+  public async getGitDir(): Promise<string> {
+    const dir = await this.exec(["rev-parse", "--git-dir"]);
+    const trimmed = dir.trim();
+    return path.isAbsolute(trimmed) ? trimmed : path.join(this.workspacePath, trimmed);
+  }
+
   /**
-   * Build a git status snapshot for change detection: staged/unstaged counts
-   * plus a signature of the staged diff so the webview can detect when the
-   * actual staged content changed (not just the counts).
+   * Diff between two branches at their merge base (`base...head`), i.e. exactly
+   * what a Pull Request would contain.
    */
-  public async getGitSnapshot(): Promise<{
-    staged: number;
-    unstaged: number;
-    filesSignature: string;
-  }> {
-    const [counts, stagedDiff, stagedFiles] = await Promise.all([
-      this.getStatusCounts(),
-      this.getStagedDiff(),
-      this.getStagedFiles()
+  public async getBranchDiff(baseBranch: string, headBranch: string): Promise<string> {
+    return await this.exec(["diff", `${baseBranch}...${headBranch}`, "--no-color"]);
+  }
+
+  /**
+   * Read the commits a branch introduces above its base.
+   *
+   * @param baseBranch Base branch/ref.
+   * @param headBranch Head branch/ref.
+   * @param limit Maximum number of commits to return (newest first).
+   */
+  public async getCommitsBetween(
+    baseBranch: string,
+    headBranch: string,
+    limit = 50
+  ): Promise<GitCommit[]> {
+    const output = await this.exec([
+      "log",
+      "--no-merges",
+      `--max-count=${limit}`,
+      "--format=%s%x1f%b%x1e",
+      `${baseBranch}..${headBranch}`
     ]);
 
-    // A stable signature of the staged file list (order-independent-ish, simple hash).
-    const fileList = [...stagedFiles].sort();
-    const simpleHash = fileList.join("\n") + "\n" + stagedDiff.split("\n").length;
-    return {
-      staged: counts.staged,
-      unstaged: counts.unstaged,
-      filesSignature: simpleHash
-    };
+    return output
+      .split("\x1e")
+      .map((record) => record.trim())
+      .filter(Boolean)
+      .map((record) => {
+        const [subject, ...rest] = record.split("\x1f");
+        return { subject: (subject || "").trim(), body: rest.join("\x1f").trim() };
+      });
   }
 
-  /**
-   * Get the current HEAD commit hash.
-   */
-  public async getHeadHash(): Promise<string> {
-    const output = await this.exec(["rev-parse", "HEAD"]);
-    return output.trim();
-  }
-
-  /**
-   * List configured remotes as {name, url} pairs.
-   */
-  public async getRemotes(): Promise<{ name: string; url: string }[]> {
+  /** True when a local branch ref exists. */
+  public async hasLocalBranch(branch: string): Promise<boolean> {
     try {
-      const output = await this.exec(["remote", "-v"]);
-      const result: { name: string; url: string }[] = [];
-      const seen = new Set<string>();
-      for (const line of output.split("\n")) {
-        const m = line.match(/^(\S+)\s+(\S+)/);
-        if (!m) continue;
-        const [name, url] = [m[1], m[2]];
-        if (!seen.has(name)) {
-          seen.add(name);
-          result.push({ name, url });
-        }
-      }
-      return result;
+      await this.exec(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+      return true;
     } catch {
-      return [];
+      return false;
     }
   }
 
-  /**
-   * Get the current branch checked out. Returns undefined when detached.
-   */
+  /** True when a ref resolves to a commit. */
+  public async refExists(ref: string): Promise<boolean> {
+    try {
+      await this.exec(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Current branch name, or undefined when HEAD is detached. */
   public async getCurrentBranch(): Promise<string | undefined> {
     try {
       const out = await this.exec(["branch", "--show-current"]);
@@ -501,42 +237,85 @@ export class GitService {
   }
 
   /**
-   * List all local branches (and optionally remote branches).
+   * List local branches and (optionally) remote-tracking branches.
+   *
+   * The current branch is placed first so pickers default sensibly.
    */
   public async getBranches(includeRemote = true): Promise<string[]> {
     try {
       const args = ["branch", "--format=%(refname:short)"];
       if (includeRemote) args.push("-a");
       const out = await this.exec(args);
+      const current = await this.getCurrentBranch();
+
       const branches = out
         .split("\n")
-        .map((b) => b.trim())
-        .filter((b) => b.length > 0 && !b.startsWith("HEAD ->") && b !== "remotes/origin/HEAD");
-      // De-duplicate while preserving order.
-      return Array.from(new Set(branches));
+        .map((branch) => branch.trim())
+        .filter((branch) => branch.length > 0 && !branch.includes("HEAD ->") && !branch.endsWith("/HEAD"))
+        .map((branch) => branch.replace(/^remotes\//, ""));
+
+      return Array.from(new Set(branches)).sort((a, b) => {
+        if (a === current) return -1;
+        if (b === current) return 1;
+        const aRemote = a.includes("/") ? 1 : 0;
+        const bRemote = b.includes("/") ? 1 : 0;
+        return aRemote - bRemote || a.localeCompare(b);
+      });
     } catch {
       return [];
     }
   }
 
-  /**
-   * Try to resolve the default branch (origin/HEAD -> ref, falling back to "main", "master").
-   */
+  /** Resolve the default branch (`origin/HEAD`, then main/master). */
   public async getDefaultBranch(): Promise<string> {
     try {
       const out = await this.exec(["symbolic-ref", "refs/remotes/origin/HEAD"]);
       const ref = out.trim().replace(/^refs\/remotes\/origin\//, "");
       if (ref) return ref;
     } catch {
-      // ignore
+      // No origin/HEAD — fall through to heuristics.
     }
 
     const branches = await this.getBranches(true);
-    const local = branches.filter((b) => !b.startsWith("remotes/"));
-    if (local.includes("main")) return "main";
-    if (local.includes("master")) return "master";
-    const originMain = branches.find((b) => b === "origin/main" || b === "remotes/origin/main");
-    const originMaster = branches.find((b) => b === "origin/master" || b === "remotes/origin/master");
-    return originMain || originMaster || "main";
+    for (const candidate of ["main", "master"]) {
+      if (branches.includes(candidate) || branches.includes(`origin/${candidate}`)) {
+        return candidate;
+      }
+    }
+    return "main";
+  }
+
+  /** Configured remotes as {name, url} pairs. */
+  public async getRemotes(): Promise<{ name: string; url: string }[]> {
+    try {
+      const output = await this.exec(["remote", "-v"]);
+      const result: { name: string; url: string }[] = [];
+      const seen = new Set<string>();
+      for (const line of output.split("\n")) {
+        const match = line.match(/^(\S+)\s+(\S+)/);
+        if (!match) continue;
+        if (!seen.has(match[1])) {
+          seen.add(match[1]);
+          result.push({ name: match[1], url: match[2] });
+        }
+      }
+      return result;
+    } catch {
+      return [];
+    }
+  }
+
+  // ─────────────────────────── commit execution ───────────────────────────
+
+  /**
+   * Create one commit per planned commit, staging only the hunks each commit
+   * owns (delegates to {@link HunkCommitRunner}).
+   */
+  public async commitHunkPlan(
+    commits: PlannedCommit[],
+    onProgress?: (current: number, total: number, subject: string) => void
+  ): Promise<CommitExecutionResult> {
+    return new HunkCommitRunner(this).run(commits, onProgress);
   }
 }
+
