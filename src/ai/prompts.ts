@@ -1,196 +1,220 @@
 /**
- * System and user prompts for the AI commit planner.
+ * Prompts for the AI commit planner, single-message regeneration and Pull
+ * Request generation.
+ *
+ * The commit prompts operate on the *annotated* diff produced by
+ * `DiffParser.buildAnnotatedDiff`: hunks are pre-numbered (`HUNK 0 ...`) and
+ * file paths are printed verbatim, so the model only has to copy indices that
+ * provably exist instead of inventing them.
  */
 
+import type { CommitMessageContext } from "./AIProvider";
+
+/** System prompt for commit planning. */
 export const SYSTEM_PROMPT = `You are an expert Git commit planner and technical writer.
 
-You are given the complete staged Git diff.
+You receive an ANNOTATED staged diff. Each file starts with a line such as:
+FILE: src/app.ts [modified +4 -1 hunks=2]
+and each hunk starts with a line such as:
+HUNK 1 @@ -20,7 +20,12 @@
+followed by the raw diff lines of that hunk.
 
-Your task is to decompose the staged changes into a sequence of logical,
-independently applicable commits.
+TASK: split the staged changes into a sequence of atomic commits.
 
-IMPORTANT:
+HARD RULES
+1. Reference hunks by their exact "HUNK n" index for the file shown in its
+   "FILE:" line. Never invent file paths or hunk indices.
+2. Every hunk listed in the diff must be assigned to exactly one commit.
+3. Never assign the same hunk to two commits.
+4. A file may appear in several commits with different hunks.
+5. Keep related changes together and preserve dependencies between commits.
+6. Separate docs, tests, refactors and unrelated configuration changes.
+7. Do not split changes merely to increase the commit count. There is NO limit
+   on the number of commits: produce exactly as many as the changes require to
+   stay logically atomic, and no more.
 
-1. Work from diff hunks, not merely files.
-2. A file may belong to multiple commits.
-3. Never assign the same hunk to multiple commits.
-4. Every staged hunk must belong to exactly one commit.
-5. Do not invent changes that aren't present in the diff.
-6. Preserve dependencies between changes.
-7. Keep commits logically atomic.
-8. Prefer the smallest meaningful number of commits.
-9. Do not split changes merely to create more commits.
-10. Documentation, tests, refactors and unrelated configuration changes
-    should normally be separated.
+COMMIT MESSAGE FORMAT
+- "subject": imperative summary of the change, max 68 characters. Write ONLY
+  the description. NEVER include a type prefix, scope, or trailing period
+  (write "add dark mode toggle", never "feat: add dark mode toggle").
+- "type": exactly one of feat, fix, refactor, docs, style, test, chore, perf,
+  ci, build, revert.
+- "body": array of strings. Element 1 is a flowing 2-4 sentence paragraph that
+  explains the ACTUAL behaviour change (mechanisms, conditions, user-visible
+  effects) in plain English. Every remaining element is one "- " bullet that
+  stands alone. 3-8 bullets for small commits, 5-12 for large ones. No section
+  headings, no file paths, no "Files changed"/"Why this grouping" lines.
+- "overview": one separate 2-4 sentence paragraph for the UI (a reviewer's
+  summary, display only, never part of the commit).
 
-COMMIT MESSAGE FORMAT (most important output requirement):
+OPTIONAL FIELDS
+- "scope": short lowercase scope (for example "api") or omit.
+- "breaking": true only for an intentional breaking change.
+- "reasoning": one sentence explaining the grouping.
 
-Every commit subject must be a short imperative conventional-commit summary
-(max 50 chars).
+Respond with ONLY valid JSON:
+{"commits":[{"id":"1","type":"refactor","scope":"ui","subject":"consolidate actions into a single menu","body":["<summary paragraph>","- <bullet>"],"overview":"<display paragraph>","changes":[{"file":"src/app.ts","hunks":[0,2]}],"reasoning":"<one sentence>"}]}`;
 
-The commit body (returned as the "body" array) MUST follow EXACTLY this shape:
+/**
+ * Appended to the system prompt on retry attempts. Models that leaked
+ * chain-of-thought text instead of JSON are corrected by repeating the output
+ * contract in the strongest possible terms.
+ */
+export const STRICT_SYSTEM_SUFFIX = `${SYSTEM_PROMPT}
 
-1. The FIRST element is a rich, flowing, multi-sentence paragraph (not
-   telegram style) that explains the ACTUAL changes that occurred — what the
-   code now does differently, the concrete behaviors/fixes/features added,
-   and the meaningful outcome. Use plain English, avoid starting every
-   sentence with "Added/Changed/Fixed". Describe mechanisms, conditions, and
-   user-visible behavior.
+OUTPUT CONTRACT (MANDATORY)
+- Your entire reply is the JSON payload and nothing else.
+- Do NOT write explanations, analysis, reasoning, notes, apologies, headings,
+  markdown fences or trailing commentary.
+- Do NOT start with phrases like "We need", "Here is" or "Sure".
+- Every commit needs "type", "subject" and "changes"; keep "body" and
+  "overview" concise so the payload always fits in the output limit.`;
 
-2. Every REMAINING element is a "- " bullet line that lists a specific
-   change or feature with enough detail to stand alone (e.g.
-   "- Show Upload List based on current form state.").
+/** Instructions appended when the JSON-lines output format is requested. */
+export const JSONL_INSTRUCTION = `OUTPUT FORMAT (MANDATORY)
+Return one compact JSON object per line, one line per commit, and nothing else.
+Do not wrap the lines in an array or an object, do not add prose, and do not
+pretty-print. Each line must look exactly like:
+{"type":"fix","scope":"api","subject":"handle empty response bodies","body":["<2-4 sentence paragraph>","- <bullet>"],"overview":"<2-4 sentence reviewer summary>","changes":[{"file":"src/app.ts","hunks":[0,2]}]}`;
 
-Example body:
-
-[
-  "Consolidate 'UI Actions' in the 'Disbursement Order Form' into a single 'Disbursement Actions' menu for better 'Organization', and add 'Logic' to handle 'State-Dependent Buttons' such as dynamically showing 'Get Beneficiaries', 'Upload List', and 'Assign Agents' based on the current form 'State' to improve 'User Experience' and 'Workflow Progression'.",
-  "- Consolidate actions into single Disbursement Actions menu.",
-  "- Show Get Beneficiaries based on form state.",
-  "- Show Upload List based on current form state.",
-  "- Show Assign Agents based on workflow progression."
-]
+/** System prompt for regenerating a single commit message. */
+export const MESSAGE_SYSTEM_PROMPT = `You write one conventional-commit message for the exact hunks you are given.
 
 Rules:
-- The summary paragraph must be 2-4 sentences and describe real, visible
-  behavior from the diff (not "updates X").
-- Keep 3-8 bullet lines for small commits, 5-12 for larger ones.
-- Do NOT include "Files changed", "Why this grouping", or any other section
-  headings — only the summary paragraph followed by "- " bullets.
-- Do NOT list file paths in the body.
+- "subject": imperative description, max 68 characters, NO type prefix, no scope, no trailing period.
+- "type": one of feat, fix, refactor, docs, style, test, chore, perf, ci, build, revert.
+- "body": array of strings; element 1 is a 2-4 sentence paragraph describing the real behaviour change, the rest are "- " bullets that stand alone.
+- "overview": a 2-4 sentence display-only reviewer summary.
+- Describe only what the supplied hunks actually change. Never mention files.
 
-For every commit return:
-
-- commit type (feat|fix|refactor|docs|style|test|chore|perf|ci|build|revert)
-- subject (short imperative summary, max 50 chars)
-- body (array of strings; FIRST = summary paragraph, REST = "- " bullets)
-- overview (a SINGLE separate prose paragraph of 2-4 sentences explaining the
-  actual changes in more depth — this is DISPLAY-ONLY for the UI, NOT part of
-  the commit body, so it should read like a reviewer's summary, not a commit)
-- ordered list of included diff hunks
-- affected files (absolute-prefixed paths)
-
-Respond ONLY with valid JSON matching this exact schema:
-{
-  "commits": [
-    {
-      "id": "1",
-      "type": "refactor",
-      "subject": "Consolidate Disbursement Order actions into single menu",
-      "body": [
-        "Consolidate 'UI Actions' in the 'Disbursement Order Form' into a single 'Disbursement Actions' menu for better 'Organization', and add 'Logic' to handle 'State-Dependent Buttons' such as dynamically showing 'Get Beneficiaries', 'Upload List', and 'Assign Agents' based on the current form 'State' to improve 'User Experience' and 'Workflow Progression'.",
-        "- Consolidate actions into single Disbursement Actions menu.",
-        "- Show Get Beneficiaries based on form state.",
-        "- Show Upload List based on current form state.",
-        "- Show Assign Agents based on workflow progression."
-      ],
-      "overview": "This change reorganizes the Disbursement Order Form's UI Actions into a unified menu and makes the available actions responsive to the current form state. It introduces state-dependent visibility so that Get Beneficiaries, Upload List, and Assign Agents only appear when their prerequisites are met, simplifying the workflow and reducing user error.",
-      "changes": [
-        {
-          "file": "src/components/DisbursementOrderForm.tsx",
-          "hunks": [0, 2]
-        }
-      ],
-      "reasoning": "Groups the UI consolidation and state-dependent behavior into one atomic refactor."
-    }
-  ]
-}
-
-Note: hunk indices are zero-based. You must map the correct hunk index for each file.`;
+Respond with ONLY valid JSON:
+{"type":"fix","scope":"api","subject":"handle empty response bodies","body":["<paragraph>","- <bullet>"],"overview":"<paragraph>"}`;
 
 /**
- * Build the prompt for generating a Pull Request title and description.
- */
-export function buildPrPrompt(
-  diff: string,
-  commits: Array<{ subject: string; overview: string }>,
-  options?: {
-    branch?: string;
-    baseBranch?: string;
-    repoName?: string;
-  }
-): string {
-  const parts: string[] = [];
-
-  if (options?.repoName) parts.push(`Repository: ${options.repoName}`);
-  if (options?.branch) parts.push(`Source branch: ${options.branch}`);
-  if (options?.baseBranch) parts.push(`Base branch: ${options.baseBranch}`);
-
-  parts.push(
-    `You are writing a Pull Request for the changes below. The PR description must be well-styled Markdown (headers, bold, bullet lists) and MUST quote the actual diff hunks with links placeholders like [[1]](diffhunk://...) — reference where each change lives.`
-  );
-
-  parts.push(
-    [
-      "Use this structure:",
-      '- Title: a short conventional-commit style summary, e.g. "feat: enhance invoice retrieval with document revision support".',
-      '- Description: an opening prose paragraph giving a high-level summary of all changes, then grouped **bold** sections (e.g. **API Request and Pagination Improvements**) each with a bullet list and inline diffhunk links, then a closing "These changes collectively..." paragraph.'
-    ].join("\n")
-  );
-
-  parts.push(
-    [
-      'CRITICAL FORMATTING REQUIREMENTS:',
-      "1. Use RAW hash characters (#, ###) for Markdown headings - NOT URL-encoded sequences like %23. NEVER write %23 - always write the literal # character.",
-      '2. Use RAW newlines (\\n) between paragraphs and sections. Never output literal "\\n" escape sequences.',
-      "3. Use standard Markdown: ### Section Title for headings, - bullet for lists, **bold** for emphasis.",
-      "4. Do NOT wrap the description in HTML tags or code fences."
-    ].join("\n")
-  );
-
-  parts.push(`The planned commits are:\n${commits.map((c) => `- ${c.subject}: ${c.overview}`).join("\n")}`);
-
-  parts.push(`Here is the complete diff:\n\n\`\`\`\n${diff}\n\`\`\``);
-
-  parts.push(
-    `Respond ONLY with valid JSON. In the JSON, escape any double-quotes inside the Markdown body with backslashes, but keep raw # characters for headings and raw newlines (\\n in JSON). Your response must contain actual # for headings - never %23:\n` +
-    `{ "title": "feat: ...", "description": "Your full Markdown PR body here with ### headings" }`
-  );
-
-  return parts.join("\n\n");
-}
-
-/**
- * Build the full user prompt with instruction/sample support and the diff.
+ * Build the user prompt for commit planning.
+ *
+ * @param annotatedDiff Diff produced by `buildAnnotatedDiff`.
+ * @param options Optional repository/branch context and user guidance.
  */
 export function buildUserPrompt(
-  diff: string,
-  maxCommits: number,
+  annotatedDiff: string,
   options?: {
     instructions?: string;
     sampleMessage?: string;
     branch?: string;
     repoName?: string;
+    /** True when hunk bodies were dropped to fit the model's context window. */
+    reduced?: boolean;
+    /** True when the JSON-lines output format must be used. */
+    jsonl?: boolean;
   }
 ): string {
   const parts: string[] = [];
 
-  if (options?.repoName) {
-    parts.push(`Repository: ${options.repoName}`);
-  }
-  if (options?.branch) {
-    parts.push(`Branch: ${options.branch}`);
-  }
-
-  parts.push(`Maximum number of commits allowed: ${maxCommits}`);
-
-  if (options?.instructions && options.instructions.trim()) {
-    parts.push(
-      `Additional instructions from the user (follow these closely):\n${options.instructions.trim()}`
-    );
-  }
-
-  if (options?.sampleMessage && options.sampleMessage.trim()) {
-    parts.push(
-      `Sample commit message to use as a STYLE REFERENCE (match this level of detail and formatting, but write NEW content for THIS diff):\n${options.sampleMessage.trim()}`
-    );
-  }
+  if (options?.repoName) parts.push(`Repository: ${options.repoName}`);
+  if (options?.branch) parts.push(`Branch: ${options.branch}`);
 
   parts.push(
-    `Write every commit body with a rich summary paragraph describing the ACTUAL changes, followed by "- " bullet lines, per the schema.`
+    "Create as many atomic commits as these changes require (there is no maximum), " +
+      "and no more than that."
   );
-  parts.push(`Here is the complete staged diff:\n\n\`\`\`\n${diff}\n\`\`\``);
-  parts.push(`Output ONLY the JSON commit plan per the schema.`);
+
+  if (options?.instructions?.trim()) {
+    parts.push(`Extra instructions from the user (follow closely):\n${options.instructions.trim()}`);
+  }
+
+  if (options?.sampleMessage?.trim()) {
+    parts.push(
+      "Style reference for tone and level of detail (write NEW content for this diff):\n" +
+        options.sampleMessage.trim()
+    );
+  }
+
+  if (options?.reduced) {
+    parts.push(
+      "NOTE: some hunk bodies were omitted to fit the context window. For those files, " +
+        'use an empty "hunks" array to include the whole file and group them sensibly.'
+    );
+  }
+
+  parts.push(`ANNOTATED STAGED DIFF:\n${annotatedDiff}`);
+  parts.push(options?.jsonl ? JSONL_INSTRUCTION : "Output ONLY the JSON commit plan.");
 
   return parts.join("\n\n");
 }
+
+/**
+ * Build the user prompt for regenerating a single commit message.
+ *
+ * Only the hunks owned by that commit are sent, which keeps the request small
+ * and fast compared to regenerating the whole plan.
+ */
+export function buildMessagePrompt(context: CommitMessageContext): string {
+  const parts: string[] = [];
+
+  if (context.repoName) parts.push(`Repository: ${context.repoName}`);
+  if (context.branch) parts.push(`Branch: ${context.branch}`);
+  parts.push(`Files touched: ${context.files.join(", ") || "unknown"}`);
+  parts.push(`Previous message: ${context.type}: ${context.subject}`);
+
+  if (context.instructions?.trim()) {
+    parts.push(`Extra instructions from the user:\n${context.instructions.trim()}`);
+  }
+  if (context.sampleMessage?.trim()) {
+    parts.push(`Style reference:\n${context.sampleMessage.trim()}`);
+  }
+
+  parts.push(`HUNKS IN THIS COMMIT:\n${context.diff}`);
+  parts.push("Rewrite the commit message for exactly these hunks. Output ONLY the JSON object.");
+
+  return parts.join("\n\n");
+}
+
+/**
+ * Build the Pull Request prompt.
+ *
+ * The diff is the committed difference between base and head (`base...head`)
+ * and the commit list comes from `git log`, so the description reflects the
+ * real pull request contents rather than the local editor state.
+ *
+ * @param annotatedDiff Committed diff of the PR range.
+ * @param commits Real commits included in the PR (newest first).
+ * @param options Branch/repository context.
+ */
+export function buildPrPrompt(
+  annotatedDiff: string,
+  commits: Array<{ subject: string; body?: string }>,
+  options?: { branch?: string; baseBranch?: string; repoName?: string }
+): string {
+  const parts: string[] = [];
+
+  if (options?.repoName) parts.push(`Repository: ${options.repoName}`);
+  if (options?.baseBranch) parts.push(`Base branch: ${options.baseBranch}`);
+  if (options?.branch) parts.push(`Head branch: ${options.branch}`);
+
+  const commitList =
+    commits.length > 0
+      ? commits
+          .map((commit) => (commit.body ? `- ${commit.subject}\n  ${commit.body.replace(/\n/g, " ")}` : `- ${commit.subject}`))
+          .join("\n")
+      : "- (no commits found above the base branch)";
+
+  parts.push(
+    [
+      "You are writing the title and description of a Pull Request whose exact contents are given below.",
+      "Base every statement on the diff and the commit list - never invent changes.",
+      "",
+      "Output requirements:",
+      '- "title": one line, conventional-commit style (for example "fix: prevent duplicate invoice sync"), max 72 characters, no markdown.',
+      '- "description": well-styled GitHub Markdown. Start with a short prose paragraph summarising the PR, then 2-4 bold section headings with bullet lists grouping the changes, then a closing paragraph beginning with "These changes". Reference changed files as inline code (`path/to/file.ts`) with optional line hints, and never emit "diffhunk" links or placeholder URLs.',
+      "- Use real newline characters in the JSON string value, raw '#' characters for headings, and escape double quotes."
+    ].join("\n")
+  );
+
+  parts.push(`COMMITS INCLUDED IN THIS PULL REQUEST:\n${commitList}`);
+  parts.push(`COMMITTED DIFF (base...head):\n${annotatedDiff}`);
+  parts.push('Output ONLY this JSON: {"title":"...","description":"..."}');
+
+  return parts.join("\n\n");
+}
+
