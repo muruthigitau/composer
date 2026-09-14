@@ -2,7 +2,7 @@
   "name": "commit-composer",
   "displayName": "Commit Composer",
   "description": "AI-powered Git commit composer for VS Code. Splits staged changes into logical, reviewable commits.",
-  "version": "0.0.20",
+  "version": "0.0.35",
   "publisher": "muruthigitau",
   "author": {
     "name": "David Gitau",
@@ -321,11 +321,6 @@
           "type": "boolean",
           "default": true,
           "description": "Save API keys to VS Code settings (global). Disable to only use environment variables."
-        },
-        "commitComposer.maxCommits": {
-          "type": "number",
-          "default": 6,
-          "description": "Maximum number of commits the AI should produce for a single generation."
         }
       }
     }
@@ -338,8 +333,9 @@
     "watch": "npm run watch-webview & npm run watch-extension",
     "watch-webview": "cd webview && npm run watch",
     "watch-extension": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --watch",
-    "package": "vsce package",
-    "update-local": "vsce package --no-dependencies && code --install-extension *.vsix --force"
+    "test": "esbuild tests/*.test.ts --bundle --outdir=.test-build --platform=node --format=cjs --target=node18 && node --test .test-build/*.test.js",
+    "package": "vsce package --no-dependencies",
+    "update-local": "vsce package --no-dependencies --out commit-composer.vsix && code --install-extension commit-composer.vsix --force"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
