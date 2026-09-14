@@ -2,6 +2,7 @@ node_modules/
 dist/
 webview/node_modules/
 webview/dist/
+.test-build/
 *.vsix
 .DS_Store
 *.log
