@@ -50,8 +50,6 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
-
-  console.log("Commit Composer extension activated");
 }
 
 export function deactivate() {}
